@@ -2,7 +2,7 @@
 
 /* ---------- pure logic (also used by tests) ---------- */
 
-const DEFAULTS = { wImp: 5, wUrg: 5, wEase: 2, gKey: '', gModel: 'gemini-2.5-flash' };
+const DEFAULTS = { wImp: 5, wUrg: 5, wEase: 2, gKey: '', gModel: 'gemini-2.5-flash', syncUrl: '', syncToken: '' };
 const HOUR = 3600e3, DAY = 24 * HOUR;
 
 function urgency(when, now) {
@@ -75,11 +75,34 @@ function parseQuick(text, nowMs) {
   return { title: title || text.trim(), when: date.getTime(), hasTime };
 }
 
-if (typeof module !== 'undefined') module.exports = { urgency, rank, parseQuick, nextOccurrence, DEFAULTS };
+
+// Combine two copies of the data. Newest edit wins per item; deletes are remembered.
+// a, b: {items, deleted:{id:ts}, settingsUpdated, weights:{wImp,wUrg,wEase}}
+function mergeData(a, b) {
+  const deleted = { ...(a.deleted || {}) };
+  for (const [k, v] of Object.entries(b.deleted || {})) deleted[k] = Math.max(deleted[k] || 0, v);
+  const map = new Map();
+  for (const it of [...(a.items || []), ...(b.items || [])]) {
+    const cur = map.get(it.id);
+    if (!cur || (it.updated || 0) > (cur.updated || 0)) map.set(it.id, it);
+  }
+  const items = [...map.values()].filter(it => !((deleted[it.id] || 0) >= (it.updated || 0) && deleted[it.id]))
+    .sort((x, y) => (x.id < y.id ? -1 : 1));
+  const cutoff = Date.now() - 90 * DAY;
+  for (const k of Object.keys(deleted)) if (deleted[k] < cutoff) delete deleted[k];
+  const bNewer = (b.settingsUpdated || 0) > (a.settingsUpdated || 0);
+  return { items, deleted, settingsUpdated: Math.max(a.settingsUpdated || 0, b.settingsUpdated || 0),
+    weights: { ...(bNewer ? b.weights : a.weights) } };
+}
+
+if (typeof module !== 'undefined') module.exports = { urgency, rank, parseQuick, nextOccurrence, mergeData, DEFAULTS };
 
 /* ---------- app (browser only) ---------- */
 if (typeof document !== 'undefined') (() => {
   const $ = s => document.querySelector(s);
+  // fill any missing fields (older data, or items from another device)
+  const norm = i => ({ title: '', type: 'task', when: null, importance: 3, ease: 3, minutes: null, notes: '',
+    steps: [], repeat: 'none', done: false, doneAt: null, created: 0, updated: 0, ...i });
   const KEY = 'focusqueue.v1';
   let db = load();
   let view = 'queue';
@@ -88,11 +111,14 @@ if (typeof document !== 'undefined') (() => {
   function load() {
     try {
       const d = JSON.parse(localStorage.getItem(KEY));
-      if (d && Array.isArray(d.items)) return { settings: { ...DEFAULTS, ...d.settings }, items: d.items };
+      if (d && Array.isArray(d.items)) return { settings: { ...DEFAULTS, ...d.settings }, items: d.items.map(i => norm(i)), deleted: d.deleted || {}, settingsUpdated: d.settingsUpdated || 0 };
     } catch (e) { /* fall through */ }
-    return { settings: { ...DEFAULTS }, items: [] };
+    return { settings: { ...DEFAULTS }, items: [], deleted: {}, settingsUpdated: 0 };
   }
-  function save() { try { localStorage.setItem(KEY, JSON.stringify(db)); } catch (e) { toast('Could not save (storage full or blocked)'); } }
+  function save(noSync) {
+    try { localStorage.setItem(KEY, JSON.stringify(db)); } catch (e) { toast('Could not save (storage full or blocked)'); }
+    if (!noSync) scheduleSync();
+  }
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   function toast(msg) {
     const t = $('#toast'); t.textContent = msg; t.hidden = false;
@@ -102,7 +128,7 @@ if (typeof document !== 'undefined') (() => {
 
   function newItem(p) {
     return { id: uid(), title: '', type: 'task', when: null, importance: 3, ease: 3, minutes: null, notes: '',
-      steps: [], repeat: 'none', done: false, doneAt: null, created: Date.now(), ...p };
+      steps: [], repeat: 'none', done: false, doneAt: null, created: Date.now(), updated: Date.now(), ...p };
   }
 
   function fmtWhen(ms) {
@@ -184,6 +210,7 @@ if (typeof document !== 'undefined') (() => {
       const el = $('#' + id); el.value = s[k]; el.nextElementSibling.textContent = s[k];
     }
     $('#gKey').value = s.gKey; $('#gModel').value = s.gModel;
+    $('#sUrl').value = s.syncUrl; $('#sKey').value = s.syncToken;
   }
 
   function render() {
@@ -199,12 +226,12 @@ if (typeof document !== 'undefined') (() => {
     const now = Date.now();
     if (!it.done && it.repeat !== 'none') {
       // keep a record, then roll the live item to its next date
-      db.items.push({ ...it, id: uid(), done: true, doneAt: now, repeat: 'none' });
-      it.when = nextOccurrence(it.when, it.repeat, now);
+      db.items.push({ ...it, id: uid(), done: true, doneAt: now, repeat: 'none', updated: now });
+      it.when = nextOccurrence(it.when, it.repeat, now); it.updated = now;
       it.steps.forEach(s => { s.done = false; });
       toast('Done. Next: ' + fmtWhen(it.when));
     } else {
-      it.done = !it.done; it.doneAt = it.done ? now : null;
+      it.done = !it.done; it.doneAt = it.done ? now : null; it.updated = now;
     }
     save(); render();
   }
@@ -310,12 +337,12 @@ if (typeof document !== 'undefined') (() => {
   });
   $('#edCancel').addEventListener('click', () => $('#editor').close());
   $('#edDelete').addEventListener('click', () => {
-    db.items = db.items.filter(x => x.id !== editing.id); save(); $('#editor').close(); render(); toast('Deleted');
+    db.items = db.items.filter(x => x.id !== editing.id); db.deleted[editing.id] = Date.now(); save(); $('#editor').close(); render(); toast('Deleted');
   });
   $('#editForm').addEventListener('submit', () => {
     readEditor();
     if (!editing.title) return;
-    const { _new, ...clean } = editing;
+    const { _new, ...clean } = editing; clean.updated = Date.now();
     if (_new) db.items.push(clean);
     else db.items = db.items.map(x => x.id === clean.id ? clean : x);
     save(); render();
@@ -341,13 +368,13 @@ if (typeof document !== 'undefined') (() => {
   }));
 
   for (const [id, k] of [['wImp', 'wImp'], ['wUrg', 'wUrg'], ['wEase', 'wEase']]) {
-    $('#' + id).addEventListener('input', e => { db.settings[k] = +e.target.value; e.target.nextElementSibling.textContent = e.target.value; save(); });
+    $('#' + id).addEventListener('input', e => { db.settings[k] = +e.target.value; db.settingsUpdated = Date.now(); e.target.nextElementSibling.textContent = e.target.value; save(); });
   }
   $('#gKey').addEventListener('change', e => { db.settings.gKey = e.target.value.trim(); save(); });
   $('#gModel').addEventListener('change', e => { db.settings.gModel = e.target.value.trim() || DEFAULTS.gModel; save(); });
 
   $('#exportBtn').addEventListener('click', () => {
-    const { gKey, ...settings } = db.settings; // never export the API key
+    const { gKey, syncToken, syncUrl, ...settings } = db.settings; // never export secrets
     const blob = new Blob([JSON.stringify({ settings, items: db.items }, null, 2)], { type: 'application/json' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
     a.download = 'focus-queue-' + new Date().toISOString().slice(0, 10) + '.json'; a.click();
@@ -366,7 +393,72 @@ if (typeof document !== 'undefined') (() => {
     e.target.value = '';
   });
 
-  setInterval(() => { if (!$('#editor').open && view !== 'settings') render(); }, 60e3);
-  render();
+
+  /* ----- sync (Cloudflare Worker) ----- */
+  let syncing = false, syncAgain = false, syncTimer = null;
+  const syncOn = () => !!(db.settings.syncUrl && db.settings.syncToken);
+  function syncStatus(msg) { const el = $('#syncStatus'); if (el) el.textContent = msg; }
+  const payload = () => ({ items: db.items, deleted: db.deleted, settingsUpdated: db.settingsUpdated,
+    weights: { wImp: db.settings.wImp, wUrg: db.settings.wUrg, wEase: db.settings.wEase } });
+  function scheduleSync(delay = 1500) {
+    if (!syncOn()) return;
+    clearTimeout(syncTimer); syncTimer = setTimeout(syncNow, delay);
+  }
+  async function syncNow() {
+    if (!syncOn()) { syncStatus('Not set up.'); return; }
+    if (syncing) { syncAgain = true; return; }
+    syncing = true; syncStatus('Syncing…');
+    const base = db.settings.syncUrl.replace(/\/+$/, '');
+    const auth = { Authorization: 'Bearer ' + db.settings.syncToken };
+    try {
+      let done = false;
+      for (let attempt = 0; attempt < 3 && !done; attempt++) {
+        const g = await fetch(base + '/data', { headers: auth });
+        if (g.status === 401) throw new Error('Wrong sync key.');
+        if (!g.ok) throw new Error('Server error ' + g.status);
+        const remote = await g.json();
+        const merged = remote.data ? mergeData(payload(), remote.data) : mergeData(payload(), { items: [], deleted: {} });
+        const same = remote.data && JSON.stringify(mergeData(remote.data, { items: [], deleted: {} })) === JSON.stringify(merged);
+        if (!same) {
+          const p = await fetch(base + '/data', { method: 'PUT', headers: { ...auth, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ baseRev: remote.rev, data: merged }) });
+          if (p.status === 409) continue; // someone wrote in between; fetch and merge again
+          if (!p.ok) throw new Error('Server error ' + p.status);
+        }
+        db.items = merged.items.map(i => norm(i)); db.deleted = merged.deleted; db.settingsUpdated = merged.settingsUpdated;
+        Object.assign(db.settings, merged.weights);
+        save(true); render(); done = true;
+      }
+      if (!done) throw new Error('Busy, try again.');
+      syncStatus('Synced ' + new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }));
+    } catch (e) {
+      syncStatus(e.message === 'Failed to fetch' ? 'Offline. Will retry.' : e.message);
+    } finally {
+      syncing = false;
+      if (syncAgain) { syncAgain = false; scheduleSync(500); }
+    }
+  }
+  // a setup link from another device: #sync=<url>|<key>
+  (() => {
+    const m = location.hash.match(/^#sync=([^|]+)\|(.+)$/);
+    if (!m) return;
+    try { db.settings.syncUrl = decodeURIComponent(m[1]); db.settings.syncToken = decodeURIComponent(m[2]); save(true); toast('Sync set up'); }
+    catch (e) { toast('Bad sync link'); }
+    history.replaceState(null, '', location.pathname + location.search);
+  })();
+  $('#sUrl').addEventListener('change', e => { db.settings.syncUrl = e.target.value.trim(); save(true); scheduleSync(100); });
+  $('#sKey').addEventListener('change', e => { db.settings.syncToken = e.target.value.trim(); save(true); scheduleSync(100); });
+  $('#syncBtn').addEventListener('click', syncNow);
+  $('#syncLink').addEventListener('click', async () => {
+    if (!syncOn()) return toast('Set up sync first');
+    const link = location.origin + location.pathname + '#sync=' + encodeURIComponent(db.settings.syncUrl) + '|' + encodeURIComponent(db.settings.syncToken);
+    try { await navigator.clipboard.writeText(link); toast('Link copied. Open it on your phone.'); }
+    catch (e) { prompt('Copy this link:', link); }
+  });
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') scheduleSync(300); });
+  window.addEventListener('online', () => scheduleSync(300));
+
+  setInterval(() => { if (!$('#editor').open && view !== 'settings') render(); if (document.visibilityState === 'visible') scheduleSync(0); }, 60e3);
+  render(); scheduleSync(200);
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
 })();

@@ -44,6 +44,16 @@
     <label>API key <input type="password" id="gKey" placeholder="paste key"></label>
     <label>Model <input id="gModel" placeholder="gemini-2.5-flash"></label>
 
+    <h2>Sync between devices</h2>
+    <p class="muted">Keeps your laptop and phone the same. Set it up once, then use "Copy phone link" and open that link on your phone.</p>
+    <label>Sync address <input id="sUrl" placeholder="https://focus-sync.yourname.workers.dev"></label>
+    <label>Sync key <input type="password" id="sKey" placeholder="paste key"></label>
+    <div class="row">
+      <button id="syncBtn" class="ghost">Sync now</button>
+      <button id="syncLink" class="ghost">Copy phone link</button>
+    </div>
+    <p id="syncStatus" class="muted" role="status"></p>
+
     <h2>Your data</h2>
     <div class="row">
       <button id="exportBtn" class="ghost">Export JSON</button>
