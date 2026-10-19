@@ -438,12 +438,18 @@ if (typeof document !== 'undefined') (() => {
       if (syncAgain) { syncAgain = false; scheduleSync(500); }
     }
   }
-  // a setup link from another device: #sync=<url>|<key>
+  // a setup link from another device: #sync=<url>&key=<key>  (older form: #sync=<url>|<key>)
   (() => {
-    const m = location.hash.match(/^#sync=([^|]+)\|(.+)$/);
-    if (!m) return;
-    try { db.settings.syncUrl = decodeURIComponent(m[1]); db.settings.syncToken = decodeURIComponent(m[2]); save(true); toast('Sync set up'); }
-    catch (e) { toast('Bad sync link'); }
+    if (!location.hash.startsWith('#sync=')) return;
+    let url = '', key = '';
+    try {
+      const h = decodeURIComponent(location.hash.slice(6));
+      const bar = h.lastIndexOf('|'), amp = h.indexOf('&key=');
+      if (amp > 0) { url = h.slice(0, amp); key = h.slice(amp + 5); }
+      else if (bar > 0) { url = h.slice(0, bar); key = h.slice(bar + 1); }
+    } catch (e) { /* fall through */ }
+    if (/^https:\/\/\S+$/.test(url) && key) { db.settings.syncUrl = url; db.settings.syncToken = key.trim(); save(true); toast('Sync set up'); }
+    else toast('That sync link is incomplete. Enter the address and key in Settings.');
     history.replaceState(null, '', location.pathname + location.search);
   })();
   $('#sUrl').addEventListener('change', e => { db.settings.syncUrl = e.target.value.trim(); save(true); scheduleSync(100); });
@@ -451,7 +457,7 @@ if (typeof document !== 'undefined') (() => {
   $('#syncBtn').addEventListener('click', syncNow);
   $('#syncLink').addEventListener('click', async () => {
     if (!syncOn()) return toast('Set up sync first');
-    const link = location.origin + location.pathname + '#sync=' + encodeURIComponent(db.settings.syncUrl) + '|' + encodeURIComponent(db.settings.syncToken);
+    const link = location.origin + location.pathname + '#sync=' + db.settings.syncUrl + '&key=' + db.settings.syncToken;
     try { await navigator.clipboard.writeText(link); toast('Link copied. Open it on your phone.'); }
     catch (e) { prompt('Copy this link:', link); }
   });
