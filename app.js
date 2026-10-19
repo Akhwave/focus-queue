@@ -2,7 +2,7 @@
 
 /* ---------- pure logic (also used by tests) ---------- */
 
-const VERSION = '2026-10-19.8';
+const VERSION = '2026-10-19.10';
 const DEFAULTS = { dayStart: 9, dayEnd: 21, aiProvider: 'auto', wImp: 5, wUrg: 5, wEase: 2, wFit: 2, autoAI: true, detail: 2, gKey: '', gModel: 'gemini-2.5-flash', syncUrl: '', syncToken: '' };
 const HOUR = 3600e3, DAY = 24 * HOUR;
 
@@ -219,9 +219,12 @@ if (typeof document !== 'undefined') (() => {
     if (item.minutes) chips.push(`<span class="chip">${item.minutes} min</span>`);
     if (item.repeat !== 'none') chips.push(`<span class="chip">↻ ${item.repeat}</span>`);
     if (item.type === 'habit') chips.push('<span class="chip">habit</span>');
-    if (p && p.start != null && !item.done) chips.push(`<span class="chip ${p.fits ? '' : 'over'}">🗓 ${esc(slotLabel(p))}${p.sessions > 1 ? ' · 1 of ' + p.sessions : ''}${p.fits ? '' : ' · after deadline'}</span>`);
-    else if (p && p.none && !item.done) chips.push('<span class="chip over">no free time this week</span>');
-    if (p && p.fits === false && item.when && !item.done && p.start != null) chips.push('<span class="chip over">⚠ no gap before deadline</span>');
+    if (p && !item.done) {
+      if (p.start != null) chips.push(`<span class="chip ${p.fits ? '' : 'over'}">🗓 ${esc(slotLabel(p))}${p.sessions > 1 ? ` · 1 of ${p.sessions}` : ''}${p.fits ? '' : ' · after deadline'}</span>`);
+      else if (p.later) chips.push(`<span class="chip">start ~${esc(new Date(p.opensAt).toLocaleDateString([], { month: 'short', day: 'numeric' }))}</span>`);
+      else if (p.none) chips.push('<span class="chip over">no free time in the next two weeks</span>');
+      if (p.fits === false && item.when && p.start != null) chips.push('<span class="chip over">⚠ not all sessions fit before deadline</span>');
+    }
     if (item.why && !item.manual) chips.push(`<span class="chip">✨ ${esc(item.why)}</span>`);
     const stepsDone = item.steps.filter(s => s.done).length;
     if (item.steps.length) chips.push(`<span class="chip">${stepsDone}/${item.steps.length} steps</span>`);
@@ -259,7 +262,8 @@ if (typeof document !== 'undefined') (() => {
     for (const e of busyEvents(now)) if (e.end > now) rows.push({ start: e.start, end: e.end, kind: e.allDay ? 'allday' : 'busy', title: e.title || '(busy)', cal: e.cal, free: e.busy === false });
     for (const [id, p] of plan) {
       const it = db.items.find(x => x.id === id);
-      if (it && p.start != null) rows.push({ start: p.start, end: p.end, kind: 'work', title: it.title, id, fits: p.fits });
+      if (!it) continue;
+      for (const b of p.blocks) rows.push({ start: b.start, end: b.end, kind: 'work', title: it.title + (p.sessions > 1 ? ` (${b.k}/${p.sessions})` : ''), id, fits: p.fits });
     }
     rows.sort((a, b) => a.start - b.start || (a.kind === 'allday' ? -1 : 1));
     let html = '';
@@ -277,7 +281,7 @@ if (typeof document !== 'undefined') (() => {
       }
     }
     const none = [...plan].filter(([, p]) => p.none).map(([id]) => (db.items.find(x => x.id === id) || {}).title).filter(Boolean);
-    if (none.length) html += `<p class="muted">No free time this week for: ${none.map(esc).join(', ')}.</p>`;
+    if (none.length) html += `<p class="muted">No free time in the next two weeks for: ${none.map(esc).join(', ')}.</p>`;
     $('#view-plan').innerHTML = html || '<div class="empty">Nothing planned.</div>';
   }
 
@@ -391,7 +395,7 @@ if (typeof document !== 'undefined') (() => {
     if (!cal.fetchedAt) return 'No calendars loaded yet.';
     const n = cal.events.filter(e => !e.allDay).length;
     const when = new Date(cal.fetchedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-    return `${cal.feeds.length} calendar${cal.feeds.length === 1 ? '' : 's'}, ${n} timed events in the next week. Updated ${when}.` +
+    return `${cal.feeds.length} calendar${cal.feeds.length === 1 ? '' : 's'}, ${n} timed events in the next two weeks. Updated ${when}.` +
       (cal.errors.length ? ' Problem: ' + cal.errors.join('; ') : '');
   }
   async function refreshCalendar(force) {
@@ -406,7 +410,7 @@ if (typeof document !== 'undefined') (() => {
       if (lr.status === 401) throw new Error('Wrong sync key.');
       if (!lr.ok) throw new Error('Server error ' + lr.status);
       const { feeds = [] } = await lr.json();
-      const from = Date.now() - DAY, to = Date.now() + 8 * DAY;
+      const from = Date.now() - DAY, to = Date.now() + 15 * DAY;
       let events = [], errors = [];
       for (const f of feeds) {
         try {
@@ -433,7 +437,7 @@ if (typeof document !== 'undefined') (() => {
   // suggested slots for tasks (already in priority order); empty until a calendar has loaded
   function makePlan(items, now) {
     if (!syncOn() || !cal.fetchedAt) return new Map();
-    const slots = FQSchedule.freeSlots(busyEvents(now), now, { days: 7, dayStart: db.settings.dayStart * 60, dayEnd: db.settings.dayEnd * 60 });
+    const slots = FQSchedule.freeSlots(busyEvents(now), now, { days: 14, dayStart: db.settings.dayStart * 60, dayEnd: db.settings.dayEnd * 60 });
     return FQSchedule.planTasks(items, slots, now);
   }
   const hm = ms => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });

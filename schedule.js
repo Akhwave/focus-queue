@@ -89,40 +89,80 @@
 
   const periodOf = ms => { const h = new Date(ms).getHours(); return h < 12 ? 'morning' : h < 17 ? 'afternoon' : 'evening'; };
 
-  // Give each task (already in priority order) a time slot. Earlier tasks get first pick and slots never overlap.
-  // Returns Map(id -> {start, end, minutes, fits, session, sessions}) ; fits=false means no gap before the deadline.
+  const DAY = 24 * HOUR;
+  const dayStart = ms => { const d = new Date(ms); d.setHours(0, 0, 0, 0); return d.getTime(); };
+  const addDays = (ms, n) => { const d = new Date(ms); d.setDate(d.getDate() + n); return d.getTime(); };
+
+  // Split a task into work sessions: full chunks, then a remainder (never shorter than minSession).
+  function splitSessions(total, chunk, minSession) {
+    const out = [];
+    let left = total;
+    while (left > 0) {
+      if (left <= chunk) { out.push(Math.max(left, minSession)); break; }
+      out.push(chunk); left -= chunk;
+    }
+    return out.length ? out : [minSession];
+  }
+
+  // Give each task (already in priority order) its work sessions in the free gaps.
+  //  - big tasks get several sessions (default 90 min), at most one per day, spaced out
+  //  - work on a deadlined task opens max(7 days, 3 days per session) before the deadline, not earlier
+  //  - sessions never overlap, never run past the deadline, and prefer the task's best time of day
+  // Returns Map(id -> {start,end,minutes (first session), blocks:[{start,end,minutes,k}], sessions, fits, none, later, opensAt})
+  //   fits=false : not all sessions fit before the deadline;  later: work starts after the planning horizon;  none: no free gap at all
   function planTasks(items, slotsIn, now, opts) {
-    const o = Object.assign({ chunk: 90, buffer: 10, prefer: 48 * HOUR, max: 12 }, opts);
+    const o = Object.assign({ chunk: 90, buffer: 10, prefer: 48 * HOUR, max: 12, minSession: 30, lead: 7, perSession: 3 }, opts);
     let slots = slotsIn.map(s => s.slice());
     const plan = new Map();
     for (const it of items.slice(0, o.max)) {
       const total = defaultMinutes(it);
-      const minutes = Math.min(total, o.chunk);
-      const need = minutes * MIN;
+      const lens = splitSessions(total, o.chunk, o.minSession);
+      const n = lens.length;
       const deadline = it.when && it.when > now ? it.when : null;
-      const fitsSlot = s => s[1] - s[0] >= need && (!deadline || s[0] + need <= deadline);
-      let feasible = slots.filter(fitsSlot), fits = true;
-      if (!feasible.length) { feasible = slots.filter(s => s[1] - s[0] >= need); fits = !deadline ? true : false; }
-      if (!feasible.length) { plan.set(it.id, { start: null, end: null, minutes, fits: false, none: true }); continue; }
-      let pick = feasible[0];
-      if (it.bestTime && it.bestTime !== 'anytime') {
-        const near = feasible.find(s => s[0] - feasible[0][0] <= o.prefer && periodOf(s[0]) === it.bestTime);
-        if (near) pick = near;
+      const opensAt = deadline ? Math.max(now, deadline - Math.max(o.lead, n * o.perSession) * DAY) : now;
+      const availDays = deadline ? Math.max(1, (deadline - opensAt) / DAY) : 1;
+      const gap = n > 1 ? Math.max(1, Math.floor(availDays / (n + 1))) : 1;
+      const blocks = [];
+      let fits = true, notBefore = opensAt;
+      for (let k = 0; k < n; k++) {
+        const need = lens[k] * MIN;
+        // candidate start inside each slot, no earlier than notBefore
+        const cands = slots.map(sl => ({ sl, start: Math.max(sl[0], notBefore) })).filter(c => sl_end(c) - c.start >= need);
+        function sl_end(c) { return c.sl[1]; }
+        const feas = deadline ? cands.filter(c => c.start + need <= deadline) : cands;
+        let pool = feas, late = false;
+        if (!feas.length) {
+          if (!cands.length) break;                         // no room left in the planning horizon
+          if (k > 0) { fits = false; break; }               // later sessions can't meet the deadline
+          pool = cands; fits = false; late = true;          // first session: show the earliest gap, flagged
+        }
+        let pick = pool[0];
+        if (it.bestTime && it.bestTime !== 'anytime' && !late) {
+          const near = pool.find(c => c.start - pool[0].start <= o.prefer && periodOf(c.start) === it.bestTime);
+          if (near) pick = near;
+        }
+        const start = pick.start, end = start + need;
+        blocks.push({ start, end, minutes: lens[k], k: k + 1 });
+        // reserve the time (plus a small buffer)
+        const next = [];
+        for (const sl of slots) {
+          if (sl !== pick.sl) { next.push(sl); continue; }
+          if (start - sl[0] >= 10 * MIN) next.push([sl[0], start]);
+          if (sl[1] - (end + o.buffer * MIN) >= 10 * MIN) next.push([end + o.buffer * MIN, sl[1]]);
+        }
+        slots = next.sort((x, y) => x[0] - y[0]);
+        notBefore = addDays(dayStart(start), gap);
       }
-      const start = pick[0], end = start + need;
-      plan.set(it.id, { start, end, minutes, fits, session: 1, sessions: Math.ceil(total / o.chunk) });
-      // reserve the time (plus a small buffer) so the next task cannot take it
-      const next = [];
-      for (const s of slots) {
-        if (s !== pick) { next.push(s); continue; }
-        if (start - s[0] >= 10 * MIN) next.push([s[0], start]);
-        if (s[1] - (end + o.buffer * MIN) >= 10 * MIN) next.push([end + o.buffer * MIN, s[1]]);
-      }
-      slots = next.sort((a, b) => a[0] - b[0]);
+      const first = blocks[0];
+      const later = !first && opensAt > now && slotsIn.length > 0 && opensAt >= slotsIn[slotsIn.length - 1][1];
+      plan.set(it.id, {
+        start: first ? first.start : null, end: first ? first.end : null, minutes: first ? first.minutes : lens[0],
+        blocks, sessions: n, session: 1, total, fits, opensAt, later, none: !first && !later,
+      });
     }
     return plan;
   }
 
-  const api = { expandEvents, freeSlots, defaultMinutes, planTasks, periodOf };
+  const api = { expandEvents, freeSlots, defaultMinutes, planTasks, splitSessions, periodOf };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.FQSchedule = api;
 })(typeof window !== 'undefined' ? window : globalThis);

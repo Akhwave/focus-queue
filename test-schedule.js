@@ -123,14 +123,41 @@ const items = [
   { id: 'quick', minutes: 15, when: at(10, 20, 17), bestTime: 'morning' },
 ];
 const p = S.planTasks(items, free, at(10, 19, 8), {});
-assert.strictEqual(p.get('big').minutes, 90, 'long tasks planned as a 90-minute session'); assert.strictEqual(p.get('big').sessions, 3);
-assert.strictEqual(p.get('urgent').fits, false, 'cannot finish 30 min by 12:20 from a 12:00 slot? (12:00+30 = 12:30 > 12:20)');
+assert.strictEqual(p.get('big').sessions, 3, '200 min = 90 + 90 + 30');
+assert.strictEqual(p.get('big').blocks[0].minutes, 90);
+assert.strictEqual(p.get('urgent').fits, false, '12:00 + 30 min is after the 12:20 deadline? no: 12:30 > 12:20');
 assert.strictEqual(p.get('eve').start, at(10, 20, 19), 'evening task goes to the evening slot');
 assert.strictEqual(p.get('quick').fits, true);
-// no overlaps between planned blocks
-const blocks = [...p.values()].filter(b => b.start != null).sort((a, b) => a.start - b.start);
-for (let i = 1; i < blocks.length; i++) assert.ok(blocks[i].start >= blocks[i - 1].end, 'planned blocks overlap');
-// no slots at all
+const allBlocks = [...p.values()].flatMap(b => b.blocks).sort((a, b) => a.start - b.start);
+for (let i = 1; i < allBlocks.length; i++) assert.ok(allBlocks[i].start >= allBlocks[i - 1].end, 'planned blocks overlap');
 assert.strictEqual(S.planTasks([{ id: 'z', minutes: 10 }], [], at(10, 19), {}).get('z').none, true);
+assert.deepStrictEqual([S.splitSessions(480, 90, 30), S.splitSessions(100, 90, 30), S.splitSessions(20, 90, 30), S.splitSessions(180, 90, 30)],
+  [[90, 90, 90, 90, 90, 30], [90, 30], [30], [90, 90]]);
+
+// multi-day: an 8-hour coursework due in 18 days gets sessions on different days, spaced out, before the deadline
+const week = [];
+for (let d = 0; d < 14; d++) week.push([at(10, 19 + d, 9), at(10, 19 + d, 21)]);
+const nowW = at(10, 19, 8);
+const cw = { id: 'cw', minutes: 480, when: at(11, 6, 13), importance: 5, ease: 1, bestTime: 'morning' };
+const pw = S.planTasks([cw], week, nowW, {}).get('cw');
+assert.strictEqual(pw.sessions, 6);
+assert.ok(pw.blocks.length >= 4, 'several sessions are planned inside the 14-day horizon: ' + pw.blocks.length);
+const days = pw.blocks.map(b => new Date(b.start).toDateString());
+assert.strictEqual(new Set(days).size, days.length, 'at most one session per day');
+for (let i = 1; i < pw.blocks.length; i++) assert.ok(new Date(pw.blocks[i].start).setHours(0, 0, 0, 0) - new Date(pw.blocks[i - 1].start).setHours(0, 0, 0, 0) >= 2 * 86400e3 - 3600e3, 'sessions are spaced at least 2 days apart');
+assert.ok(pw.blocks.every(b => b.end <= cw.when), 'nothing after the deadline'); assert.strictEqual(pw.fits, true);
+assert.ok(pw.blocks.every(b => periodOf(b.start) === 'morning'), 'morning preference honoured when the gaps allow');
+function periodOf(ms) { return S.periodOf(ms); }
+
+// work on a far-off deadline does not start yet (window opens max(7, 3*sessions) days before)
+const far = S.planTasks([{ id: 'far', minutes: 480, when: at(11, 25, 12), bestTime: 'anytime' }], week, nowW, {}).get('far');
+assert.strictEqual(far.blocks.length, 0); assert.strictEqual(far.later, true); assert.ok(far.opensAt > at(11, 1));
+// a single short task due in 12 days is not scheduled today either
+const shortFar = S.planTasks([{ id: 's', minutes: 30, when: at(10, 31, 12), bestTime: 'anytime' }], week, nowW, {}).get('s');
+assert.ok(shortFar.blocks.length === 1 && shortFar.blocks[0].start >= at(10, 24), 'starts in the last week before the deadline');
+// not enough room before a close deadline: flagged, not silently dropped
+const tight = S.planTasks([{ id: 't', minutes: 480, when: at(10, 21, 12) }], week, nowW, {}).get('t');
+assert.strictEqual(tight.fits, false);
+assert.ok(tight.blocks.every(b => b.end <= at(10, 21, 12) || tight.blocks.indexOf(b) === 0));
 assert.strictEqual(S.defaultMinutes({ ease: 5 }), 15); assert.strictEqual(S.defaultMinutes({ ease: 1 }), 120); assert.strictEqual(S.defaultMinutes({ minutes: 20, ease: 1 }), 20);
 console.log('schedule tests ok');
