@@ -39,11 +39,13 @@
     <label>Ease <input type="range" id="wEase" min="0" max="10"><output></output></label>
     <label>Fits right now (time of day) <input type="range" id="wFit" min="0" max="10"><output></output></label>
 
-    <h2>AI helper (Gemini)</h2>
-    <p class="muted">Optional. Used to break tasks into steps and suggest importance / ease. The key stays in this browser only.
+    <h2>AI helper</h2>
+    <label>AI engine
+      <select id="aiProvider"><option value="auto">Automatic: free Cloudflare AI (needs sync set up below)</option><option value="gemini">Gemini with my own key</option></select></label>
+    <p class="muted">The Gemini key is only needed if you pick Gemini above. It stays in this browser only.
       Get a free key at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>.</p>
-    <label>API key <input type="password" id="gKey" placeholder="paste key"></label>
-    <label>Model <input id="gModel" placeholder="gemini-2.5-flash"></label>
+    <label>Gemini API key <input type="password" id="gKey" placeholder="paste key"></label>
+    <label>Gemini model <input id="gModel" placeholder="gemini-2.5-flash"></label>
     <label class="check"><input type="checkbox" id="autoAI"> Let AI score new tasks automatically</label>
     <label>Breakdown detail (how many steps big tasks are split into)
       <select id="detail"><option value="1">Fewer, bigger steps</option><option value="2">Normal</option><option value="3">Many small steps</option></select></label>

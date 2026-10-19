@@ -6,6 +6,9 @@ compatibility_date = "2025-09-01"
 # Browsers allowed to call this API (comma separated). The sync key is still required.
 ALLOWED_ORIGINS = "https://akhwave.github.io,http://localhost:8810"
 
+[ai]
+binding = "AI"
+
 [[durable_objects.bindings]]
 name = "STORE"
 class_name = "Store"

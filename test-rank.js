@@ -39,4 +39,18 @@ assert.strictEqual(st[0].steps[1].text.length, 100);
 assert.deepStrictEqual(st[1].steps, [{ text: 'mine', done: false }], 'existing steps kept');
 const { stepCount } = require('./app.js');
 assert.deepStrictEqual([stepCount(1), stepCount(2), stepCount(3), stepCount(undefined)], ['2 to 4', '4 to 7', '7 to 12', '4 to 7']);
+const { toGemini } = require('./app.js');
+assert.deepStrictEqual(toGemini({ type: 'object', properties: { a: { type: 'array', items: { type: 'string', enum: ['x'] } }, n: { type: 'integer' } }, required: ['a'] }),
+  { type: 'OBJECT', properties: { a: { type: 'ARRAY', items: { type: 'STRING', enum: ['x'] } }, n: { type: 'INTEGER' } }, required: ['a'] });
+const { alignResults } = require('./app.js');
+const sent = [{ id: 'x1' }, { id: 'x2' }, { id: 'x3' }];
+// ids match (any order)
+let a = alignResults(sent, { items: [{ id: 'x3', importance: 1 }, { id: 'x1', importance: 2 }] });
+assert.deepStrictEqual(a.items.map(i => [i.id, i.importance]), [['x1', 2], ['x3', 1]]);
+// ids mangled but same count: use position
+a = alignResults(sent, { items: [{ id: '1', importance: 5 }, { id: '2', importance: 4 }, { id: '3', importance: 3 }] });
+assert.deepStrictEqual(a.items.map(i => [i.id, i.importance]), [['x1', 5], ['x2', 4], ['x3', 3]]);
+// ids mangled and count differs: apply nothing rather than guess
+a = alignResults(sent, { items: [{ id: '1', importance: 5 }] }); assert.strictEqual(a.items.length, 0);
+assert.strictEqual(alignResults(sent, null).items.length, 0); assert.strictEqual(alignResults(sent, { items: 'junk' }).items.length, 0);
 console.log('rank tests ok');
