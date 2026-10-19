@@ -131,8 +131,8 @@ assert.strictEqual(p.get('quick').fits, true);
 const allBlocks = [...p.values()].flatMap(b => b.blocks).sort((a, b) => a.start - b.start);
 for (let i = 1; i < allBlocks.length; i++) assert.ok(allBlocks[i].start >= allBlocks[i - 1].end, 'planned blocks overlap');
 assert.strictEqual(S.planTasks([{ id: 'z', minutes: 10 }], [], at(10, 19), {}).get('z').none, true);
-assert.deepStrictEqual([S.splitSessions(480, 90, 30), S.splitSessions(100, 90, 30), S.splitSessions(20, 90, 30), S.splitSessions(180, 90, 30)],
-  [[90, 90, 90, 90, 90, 30], [90, 30], [30], [90, 90]]);
+assert.deepStrictEqual([S.splitSessions(480, 90, 30, 120), S.splitSessions(100, 90, 30, 120), S.splitSessions(120, 90, 30, 120), S.splitSessions(20, 90, 30, 120), S.splitSessions(180, 90, 30, 120), S.splitSessions(100, 90, 30)],
+  [[90, 90, 90, 90, 90, 30], [100], [120], [30], [90, 90], [90, 30]]);
 
 // multi-day: an 8-hour coursework due in 18 days gets sessions on different days, spaced out, before the deadline
 const week = [];
@@ -160,4 +160,29 @@ const tight = S.planTasks([{ id: 't', minutes: 480, when: at(10, 21, 12) }], wee
 assert.strictEqual(tight.fits, false);
 assert.ok(tight.blocks.every(b => b.end <= at(10, 21, 12) || tight.blocks.indexOf(b) === 0));
 assert.strictEqual(S.defaultMinutes({ ease: 5 }), 15); assert.strictEqual(S.defaultMinutes({ ease: 1 }), 120); assert.strictEqual(S.defaultMinutes({ minutes: 20, ease: 1 }), 20);
+// ---- dependencies: lectures -> sheet 1 -> sheet 2 -> tutorial, even when priority order says otherwise ----
+const dep = [
+  { id: 'tut', minutes: 90, when: at(10, 26, 13), after: ['s2'], importance: 5 },
+  { id: 's2', minutes: 120, when: at(10, 25, 12), after: ['s1'], importance: 2 },
+  { id: 's1', minutes: 120, when: at(10, 24, 18), after: ['lec'], importance: 2 },
+  { id: 'lec', minutes: 150, when: at(10, 23, 18), importance: 1 },
+];
+assert.deepStrictEqual(S.orderByDeps(dep).map(i => i.id), ['lec', 's1', 's2', 'tut']);
+assert.deepStrictEqual(S.orderByDeps([{ id: 'a', after: ['b'] }, { id: 'b', after: ['a'] }]).map(i => i.id).sort(), ['a', 'b'], 'cycles do not hang');
+const pd = S.planTasks(dep, week, nowW, {});
+const lastEnd = id => pd.get(id).blocks[pd.get(id).blocks.length - 1].end;
+assert.ok(pd.get('s1').blocks[0].start >= lastEnd('lec'), 'sheet 1 starts after the lectures are done');
+const dOf = ms => new Date(ms).setHours(0, 0, 0, 0);
+assert.ok(dOf(pd.get('s1').blocks[0].start) > dOf(lastEnd('lec')), 'with room to spare, the next task starts the next day');
+assert.ok(dOf(pd.get('tut').blocks[0].start) > dOf(lastEnd('s2')));
+// but when the deadline is tight, it follows straight on rather than missing it
+const tightDep = S.planTasks([{ id: 'a', minutes: 60, when: at(10, 20, 16) }, { id: 'b', minutes: 60, when: at(10, 20, 18), after: ['a'] }], week, nowW, {});
+assert.strictEqual(dOf(tightDep.get('b').blocks[0].start), dOf(at(10, 20)), 'same day when the deadline needs it');
+assert.strictEqual(tightDep.get('b').fits, true);
+assert.ok(pd.get('s2').blocks[0].start >= lastEnd('s1'), 'sheet 2 after sheet 1');
+assert.ok(pd.get('tut').blocks[0].start >= lastEnd('s2'), 'tutorial after sheet 2');
+assert.strictEqual(pd.get('s1').sessions, 1, 'a 2-hour sheet is one session');
+// a prerequisite that has no sessions yet holds its dependents back
+const held = S.planTasks([{ id: 'x', minutes: 480, when: at(11, 25, 12) }, { id: 'y', minutes: 30, after: ['x'] }], week, nowW, {});
+assert.strictEqual(held.get('y').blocks.length, 0); assert.strictEqual(held.get('y').later, true);
 console.log('schedule tests ok');

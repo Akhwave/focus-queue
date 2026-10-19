@@ -2,7 +2,7 @@
 
 /* ---------- pure logic (also used by tests) ---------- */
 
-const VERSION = '2026-10-19.10';
+const VERSION = '2026-10-19.11';
 const DEFAULTS = { dayStart: 9, dayEnd: 21, aiProvider: 'auto', wImp: 5, wUrg: 5, wEase: 2, wFit: 2, autoAI: true, detail: 2, gKey: '', gModel: 'gemini-2.5-flash', syncUrl: '', syncToken: '' };
 const HOUR = 3600e3, DAY = 24 * HOUR;
 
@@ -161,7 +161,7 @@ if (typeof document !== 'undefined') (() => {
   const $ = s => document.querySelector(s);
   // fill any missing fields (older data, or items from another device)
   const norm = i => ({ title: '', type: 'task', when: null, importance: 3, ease: 3, minutes: null, notes: '',
-    steps: [], repeat: 'none', done: false, doneAt: null, created: 0, updated: 0, ...i });
+    steps: [], after: [], repeat: 'none', done: false, doneAt: null, created: 0, updated: 0, ...i });
   const KEY = 'focusqueue.v1';
   let db = load();
   let view = 'queue';

@@ -94,7 +94,8 @@
   const addDays = (ms, n) => { const d = new Date(ms); d.setDate(d.getDate() + n); return d.getTime(); };
 
   // Split a task into work sessions: full chunks, then a remainder (never shorter than minSession).
-  function splitSessions(total, chunk, minSession) {
+  function splitSessions(total, chunk, minSession, maxSingle) {
+    if (total <= (maxSingle || 0)) return [Math.max(total, minSession)]; // short enough to do in one go
     const out = [];
     let left = total;
     while (left > 0) {
@@ -104,6 +105,20 @@
     return out.length ? out : [minSession];
   }
 
+  // Put every task after the tasks it says it must follow (item.after = [ids]), otherwise keep priority order.
+  function orderByDeps(items) {
+    const byId = new Map(items.map(i => [i.id, i]));
+    const out = [], seen = new Set(), stack = new Set();
+    const visit = i => {
+      if (seen.has(i.id) || stack.has(i.id)) return; // stack: ignore cycles
+      stack.add(i.id);
+      for (const pid of i.after || []) { const p = byId.get(pid); if (p) visit(p); }
+      stack.delete(i.id); seen.add(i.id); out.push(i);
+    };
+    items.forEach(visit);
+    return out;
+  }
+
   // Give each task (already in priority order) its work sessions in the free gaps.
   //  - big tasks get several sessions (default 90 min), at most one per day, spaced out
   //  - work on a deadlined task opens max(7 days, 3 days per session) before the deadline, not earlier
@@ -111,20 +126,34 @@
   // Returns Map(id -> {start,end,minutes (first session), blocks:[{start,end,minutes,k}], sessions, fits, none, later, opensAt})
   //   fits=false : not all sessions fit before the deadline;  later: work starts after the planning horizon;  none: no free gap at all
   function planTasks(items, slotsIn, now, opts) {
-    const o = Object.assign({ chunk: 90, buffer: 10, prefer: 48 * HOUR, max: 12, minSession: 30, lead: 7, perSession: 3 }, opts);
+    const o = Object.assign({ chunk: 90, buffer: 10, prefer: 48 * HOUR, max: 20, minSession: 30, lead: 7, perSession: 3, maxSingle: 120 }, opts);
     let slots = slotsIn.map(s => s.slice());
     const plan = new Map();
-    for (const it of items.slice(0, o.max)) {
+    for (const it of orderByDeps(items.slice(0, o.max))) {
       const total = defaultMinutes(it);
-      const lens = splitSessions(total, o.chunk, o.minSession);
+      const lens = splitSessions(total, o.chunk, o.minSession, o.maxSingle);
       const n = lens.length;
       const deadline = it.when && it.when > now ? it.when : null;
       const opensAt = deadline ? Math.max(now, deadline - Math.max(o.lead, n * o.perSession) * DAY) : now;
       const availDays = deadline ? Math.max(1, (deadline - opensAt) / DAY) : 1;
       const gap = n > 1 ? Math.max(1, Math.floor(availDays / (n + 1))) : 1;
       const blocks = [];
-      let fits = true, notBefore = opensAt;
-      for (let k = 0; k < n; k++) {
+      // must come after its prerequisites: start once their last session ends; if one has no sessions yet, wait too
+      let depEnd = 0, waiting = false;
+      for (const pid of it.after || []) {
+        const pp = plan.get(pid);
+        if (!pp) continue;
+        if (pp.blocks.length) depEnd = Math.max(depEnd, pp.blocks[pp.blocks.length - 1].end); else waiting = true;
+      }
+      // give related tasks a night in between when the deadline allows it, otherwise follow straight on
+      let notBefore = Math.max(opensAt, depEnd);
+      if (depEnd) {
+        const nextDay = Math.max(opensAt, addDays(dayStart(depEnd), 1)), firstNeed = lens[0] * MIN;
+        const room = nb => slots.some(sl => { const st = Math.max(sl[0], nb); return sl[1] - st >= firstNeed && (!deadline || st + firstNeed <= deadline); });
+        if (room(nextDay)) notBefore = nextDay;
+      }
+      let fits = true;
+      for (let k = 0; k < n && !waiting; k++) {
         const need = lens[k] * MIN;
         // candidate start inside each slot, no earlier than notBefore
         const cands = slots.map(sl => ({ sl, start: Math.max(sl[0], notBefore) })).filter(c => sl_end(c) - c.start >= need);
@@ -154,7 +183,7 @@
         notBefore = addDays(dayStart(start), gap);
       }
       const first = blocks[0];
-      const later = !first && opensAt > now && slotsIn.length > 0 && opensAt >= slotsIn[slotsIn.length - 1][1];
+      const later = waiting || (!first && opensAt > now && slotsIn.length > 0 && opensAt >= slotsIn[slotsIn.length - 1][1]);
       plan.set(it.id, {
         start: first ? first.start : null, end: first ? first.end : null, minutes: first ? first.minutes : lens[0],
         blocks, sessions: n, session: 1, total, fits, opensAt, later, none: !first && !later,
@@ -163,6 +192,6 @@
     return plan;
   }
 
-  const api = { expandEvents, freeSlots, defaultMinutes, planTasks, splitSessions, periodOf };
+  const api = { expandEvents, freeSlots, defaultMinutes, planTasks, splitSessions, orderByDeps, periodOf };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.FQSchedule = api;
 })(typeof window !== 'undefined' ? window : globalThis);
