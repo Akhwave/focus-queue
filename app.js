@@ -458,7 +458,8 @@ if (typeof document !== 'undefined') (() => {
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') scheduleSync(300); });
   window.addEventListener('online', () => scheduleSync(300));
 
-  setInterval(() => { if (!$('#editor').open && view !== 'settings') render(); if (document.visibilityState === 'visible') scheduleSync(0); }, 60e3);
+  setInterval(() => { if (!$('#editor').open && view !== 'settings') render(); }, 60e3);
+  setInterval(() => { if (document.visibilityState === 'visible') scheduleSync(0); }, 15e3); // pick up changes from other devices
   render(); scheduleSync(200);
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
 })();
