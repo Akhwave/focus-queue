@@ -82,7 +82,11 @@ async function calendar(req, env, cors, reply) {
   // plain http is only allowed for a local test feed; real calendar links are always https
   if (!/^https:\/\//i.test(url) && !/^http:\/\/(127\.0\.0\.1|localhost)[:/]/i.test(url)) return reply({ error: 'calendar link must be https' }, 500);
   try {
-    const up = await fetch(url, { signal: AbortSignal.timeout(12000), cf: { cacheTtl: 300, cacheEverything: true } });
+    const up = await fetch(url, {
+      signal: AbortSignal.timeout(20000),
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; FocusQueue calendar sync)', Accept: 'text/calendar, text/plain, */*' },
+      cf: { cacheTtl: 300, cacheEverything: true },
+    });
     if (!up.ok) return reply({ error: 'calendar provider answered ' + up.status }, 502);
     if (Number(up.headers.get('content-length') || 0) > 12_000_000) return reply({ error: 'calendar file too large' }, 502);
     return new Response(up.body, { status: 200, headers: { ...cors, 'Content-Type': 'text/calendar; charset=utf-8', 'Cache-Control': 'private, max-age=60' } });
