@@ -2,6 +2,7 @@
 
 /* ---------- pure logic (also used by tests) ---------- */
 
+const VERSION = '2026-10-19.4';
 const DEFAULTS = { wImp: 5, wUrg: 5, wEase: 2, gKey: '', gModel: 'gemini-2.5-flash', syncUrl: '', syncToken: '' };
 const HOUR = 3600e3, DAY = 24 * HOUR;
 
@@ -211,6 +212,7 @@ if (typeof document !== 'undefined') (() => {
     }
     $('#gKey').value = s.gKey; $('#gModel').value = s.gModel;
     $('#sUrl').value = s.syncUrl; $('#sKey').value = s.syncToken;
+    $('#ver').textContent = 'App version ' + VERSION + (syncOn() ? '' : ' · sync not set up on this device');
   }
 
   function render() {
@@ -432,7 +434,9 @@ if (typeof document !== 'undefined') (() => {
       if (!done) throw new Error('Busy, try again.');
       syncStatus('Synced ' + new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }));
     } catch (e) {
-      syncStatus(e.message === 'Failed to fetch' ? 'Offline. Will retry.' : e.message);
+      syncStatus(e.name === 'TypeError' || /fetch|network|load failed/i.test(e.message)
+        ? "Can't reach the sync server (offline, blocked, or wrong address). Check the address starts with https://"
+        : e.message);
     } finally {
       syncing = false;
       if (syncAgain) { syncAgain = false; scheduleSync(500); }
@@ -452,7 +456,7 @@ if (typeof document !== 'undefined') (() => {
     else toast('That sync link is incomplete. Enter the address and key in Settings.');
     history.replaceState(null, '', location.pathname + location.search);
   })();
-  $('#sUrl').addEventListener('change', e => { db.settings.syncUrl = e.target.value.trim(); save(true); scheduleSync(100); });
+  $('#sUrl').addEventListener('change', e => { db.settings.syncUrl = e.target.value.trim().replace(/\/+$/, ''); save(true); scheduleSync(100); });
   $('#sKey').addEventListener('change', e => { db.settings.syncToken = e.target.value.trim(); save(true); scheduleSync(100); });
   $('#syncBtn').addEventListener('click', syncNow);
   $('#syncLink').addEventListener('click', async () => {
