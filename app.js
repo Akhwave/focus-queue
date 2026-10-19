@@ -2,8 +2,8 @@
 
 /* ---------- pure logic (also used by tests) ---------- */
 
-const VERSION = '2026-10-19.7';
-const DEFAULTS = { aiProvider: 'auto', wImp: 5, wUrg: 5, wEase: 2, wFit: 2, autoAI: true, detail: 2, gKey: '', gModel: 'gemini-2.5-flash', syncUrl: '', syncToken: '' };
+const VERSION = '2026-10-19.8';
+const DEFAULTS = { dayStart: 9, dayEnd: 21, aiProvider: 'auto', wImp: 5, wUrg: 5, wEase: 2, wFit: 2, autoAI: true, detail: 2, gKey: '', gModel: 'gemini-2.5-flash', syncUrl: '', syncToken: '' };
 const HOUR = 3600e3, DAY = 24 * HOUR;
 
 function urgency(when, now) {
@@ -211,7 +211,7 @@ if (typeof document !== 'undefined') (() => {
     const n = (item.steps || []).find(x => !x.done);
     return n && !item.done ? `<div class="next">Next: ${esc(n.text)}</div>` : '';
   }
-  function card(item, now, r) {
+  function card(item, now, r, p) {
     const cls = item.type === 'event' ? 'event' : r ? r.tier : 'later';
     const chips = [];
     if (item.when) chips.push(`<span class="chip ${r && r.overdue ? 'over' : ''}">${esc(fmtWhen(item.when))} · ${until(item.when, now)}</span>`);
@@ -219,6 +219,9 @@ if (typeof document !== 'undefined') (() => {
     if (item.minutes) chips.push(`<span class="chip">${item.minutes} min</span>`);
     if (item.repeat !== 'none') chips.push(`<span class="chip">↻ ${item.repeat}</span>`);
     if (item.type === 'habit') chips.push('<span class="chip">habit</span>');
+    if (p && p.start != null && !item.done) chips.push(`<span class="chip ${p.fits ? '' : 'over'}">🗓 ${esc(slotLabel(p))}${p.sessions > 1 ? ' · 1 of ' + p.sessions : ''}${p.fits ? '' : ' · after deadline'}</span>`);
+    else if (p && p.none && !item.done) chips.push('<span class="chip over">no free time this week</span>');
+    if (p && p.fits === false && item.when && !item.done && p.start != null) chips.push('<span class="chip over">⚠ no gap before deadline</span>');
     if (item.why && !item.manual) chips.push(`<span class="chip">✨ ${esc(item.why)}</span>`);
     const stepsDone = item.steps.filter(s => s.done).length;
     if (item.steps.length) chips.push(`<span class="chip">${stepsDone}/${item.steps.length} steps</span>`);
@@ -232,6 +235,8 @@ if (typeof document !== 'undefined') (() => {
     const open = db.items.filter(i => !i.done);
     const tasks = open.filter(i => i.type !== 'event')
       .map(i => ({ i, r: rank(i, now, w) })).sort((a, b) => b.r.score - a.r.score);
+    const plan = makePlan(tasks.map(x => x.i), now);
+    for (const x of tasks) { const p = plan.get(x.i.id); if (p && p.fits === false && x.i.when && !x.r.overdue) x.r = { ...x.r, tier: 'now' }; }
     const events = open.filter(i => i.type === 'event' && i.when && i.when > now - HOUR && i.when < now + 2 * DAY)
       .sort((a, b) => a.when - b.when);
     const labels = { now: 'Do now', next: 'Up next', later: 'Later' };
@@ -239,9 +244,41 @@ if (typeof document !== 'undefined') (() => {
     if (events.length) html += '<div class="group">Coming up</div>' + events.map(e => card(e, now, null)).join('');
     for (const tier of ['now', 'next', 'later']) {
       const g = tasks.filter(x => x.r.tier === tier);
-      if (g.length) html += `<div class="group">${labels[tier]}</div>` + g.map(x => card(x.i, now, x.r)).join('');
+      if (g.length) html += `<div class="group">${labels[tier]}</div>` + g.map(x => card(x.i, now, x.r, plan.get(x.i.id))).join('');
     }
     $('#view-queue').innerHTML = html || '<div class="empty">Nothing to do. Add something above.</div>';
+  }
+
+
+  function renderPlan() {
+    const now = Date.now();
+    const open = db.items.filter(i => !i.done && i.type !== 'event')
+      .map(i => ({ i, r: rank(i, now, db.settings) })).sort((a, b) => b.r.score - a.r.score);
+    const plan = makePlan(open.map(x => x.i), now);
+    const rows = [];
+    for (const e of busyEvents(now)) if (e.end > now) rows.push({ start: e.start, end: e.end, kind: e.allDay ? 'allday' : 'busy', title: e.title || '(busy)', cal: e.cal, free: e.busy === false });
+    for (const [id, p] of plan) {
+      const it = db.items.find(x => x.id === id);
+      if (it && p.start != null) rows.push({ start: p.start, end: p.end, kind: 'work', title: it.title, id, fits: p.fits });
+    }
+    rows.sort((a, b) => a.start - b.start || (a.kind === 'allday' ? -1 : 1));
+    let html = '';
+    if (!syncOn() || !cal.fetchedAt) html += `<p class="muted">${esc(calSummary())} Suggestions need your calendars: Settings → Calendar.</p>`;
+    let lastDay = '';
+    for (const r of rows) {
+      const dayKey = new Date(r.start).toDateString();
+      if (dayKey !== lastDay) { lastDay = dayKey; html += `<div class="group">${esc(fmtWhen(new Date(dayKey).getTime()).split(',')[0])}</div>`; }
+      if (r.kind === 'work') {
+        html += `<div class="plan work ${r.fits ? '' : 'risk'}" data-open="${r.id}" tabindex="0" role="button"><span class="t">${hm(r.start)}–${hm(r.end)}</span><span class="n">✨ ${esc(r.title)}</span></div>`;
+      } else if (r.kind === 'allday') {
+        html += `<div class="plan allday"><span class="t">all day</span><span class="n">${esc(r.title)}</span></div>`;
+      } else {
+        html += `<div class="plan busy ${r.free ? 'freecal' : ''}"><span class="t">${hm(r.start)}–${hm(r.end)}</span><span class="n">${esc(r.title)}${r.cal ? ` <span class="muted">· ${esc(r.cal)}</span>` : ''}</span></div>`;
+      }
+    }
+    const none = [...plan].filter(([, p]) => p.none).map(([id]) => (db.items.find(x => x.id === id) || {}).title).filter(Boolean);
+    if (none.length) html += `<p class="muted">No free time this week for: ${none.map(esc).join(', ')}.</p>`;
+    $('#view-plan').innerHTML = html || '<div class="empty">Nothing planned.</div>';
   }
 
   function renderAgenda() {
@@ -275,6 +312,7 @@ if (typeof document !== 'undefined') (() => {
       const el = $('#' + id); el.value = s[k]; el.nextElementSibling.textContent = s[k];
     }
     $('#gKey').value = s.gKey; $('#gModel').value = s.gModel;
+    $('#dayStart').value = String(s.dayStart); $('#dayEnd').value = String(s.dayEnd); calStatus(calSummary());
     $('#aiProvider').value = s.aiProvider === 'gemini' ? 'gemini' : 'auto';
     $('#autoAI').checked = s.autoAI !== false; $('#detail').value = String(s.detail || 2);
     $('#sUrl').value = s.syncUrl; $('#sKey').value = s.syncToken;
@@ -282,10 +320,10 @@ if (typeof document !== 'undefined') (() => {
   }
 
   function render() {
-    for (const v of ['queue', 'agenda', 'done', 'settings']) $('#view-' + v).hidden = v !== view;
+    for (const v of ['queue', 'plan', 'agenda', 'done', 'settings']) $('#view-' + v).hidden = v !== view;
     document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.view === view));
     $('#quickAdd').hidden = view === 'settings';
-    ({ queue: renderQueue, agenda: renderAgenda, done: renderDone, settings: renderSettings })[view]();
+    ({ queue: renderQueue, plan: renderPlan, agenda: renderAgenda, done: renderDone, settings: renderSettings })[view]();
   }
 
   /* ----- actions ----- */
@@ -340,6 +378,68 @@ if (typeof document !== 'undefined') (() => {
     editing.importance = +$('#edImp').value; editing.ease = +$('#edEase').value;
     editing.minutes = $('#edMin').value ? +$('#edMin').value : null;
     editing.notes = $('#edNotes').value;
+  }
+
+
+  /* ----- calendar (read-only, via the sync server) ----- */
+  const CAL_KEY = 'focusqueue.cal.v1';
+  let cal = (() => { try { const c = JSON.parse(localStorage.getItem(CAL_KEY)); if (c && Array.isArray(c.events)) return c; } catch (e) { /* none yet */ } return { events: [], fetchedAt: 0, errors: [], feeds: [] }; })();
+  let calBusy = false;
+  const calStatus = msg => { const el = $('#calStatus'); if (el) el.textContent = msg; };
+  function calSummary() {
+    if (!syncOn()) return 'Set up sync first: the calendar is read through your sync server.';
+    if (!cal.fetchedAt) return 'No calendars loaded yet.';
+    const n = cal.events.filter(e => !e.allDay).length;
+    const when = new Date(cal.fetchedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    return `${cal.feeds.length} calendar${cal.feeds.length === 1 ? '' : 's'}, ${n} timed events in the next week. Updated ${when}.` +
+      (cal.errors.length ? ' Problem: ' + cal.errors.join('; ') : '');
+  }
+  async function refreshCalendar(force) {
+    if (!syncOn() || calBusy) return;
+    if (!force && Date.now() - cal.fetchedAt < 5 * 60e3) return;
+    if (typeof ICAL === 'undefined' || typeof FQSchedule === 'undefined') { calStatus('Calendar code did not load. Reload the page.'); return; }
+    calBusy = true; calStatus('Reading calendars…');
+    const base = db.settings.syncUrl.replace(/\/+$/, '');
+    const auth = { Authorization: 'Bearer ' + db.settings.syncToken };
+    try {
+      const lr = await fetch(base + '/calendar', { headers: auth });
+      if (lr.status === 401) throw new Error('Wrong sync key.');
+      if (!lr.ok) throw new Error('Server error ' + lr.status);
+      const { feeds = [] } = await lr.json();
+      const from = Date.now() - DAY, to = Date.now() + 8 * DAY;
+      let events = [], errors = [];
+      for (const f of feeds) {
+        try {
+          const r = await fetch(base + '/calendar?i=' + f.i, { headers: auth });
+          if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || 'error ' + r.status); }
+          events = events.concat(FQSchedule.expandEvents(ICAL, await r.text(), from, to, f.name));
+        } catch (e) { errors.push(f.name + ': ' + e.message); }
+      }
+      cal = { events, fetchedAt: Date.now(), errors, feeds };
+      try { localStorage.setItem(CAL_KEY, JSON.stringify(cal)); } catch (e) { /* too big: keep in memory only */ }
+      render();
+    } catch (e) {
+      errorsOnly(e);
+    } finally { calBusy = false; calStatus(calSummary()); }
+    function errorsOnly(e) { cal.errors = [/fetch|network|load failed/i.test(e.message) ? "can't reach the sync server" : e.message]; }
+  }
+
+  // time already taken: calendar events plus events typed into this app
+  function busyEvents(now) {
+    const own = db.items.filter(i => i.type === 'event' && !i.done && i.when && i.when > now - 2 * HOUR)
+      .map(i => ({ start: i.when, end: i.when + 60 * 60e3, busy: true, allDay: false, title: i.title, cal: 'app' }));
+    return cal.events.concat(own);
+  }
+  // suggested slots for tasks (already in priority order); empty until a calendar has loaded
+  function makePlan(items, now) {
+    if (!syncOn() || !cal.fetchedAt) return new Map();
+    const slots = FQSchedule.freeSlots(busyEvents(now), now, { days: 7, dayStart: db.settings.dayStart * 60, dayEnd: db.settings.dayEnd * 60 });
+    return FQSchedule.planTasks(items, slots, now);
+  }
+  const hm = ms => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  function slotLabel(p) {
+    const day = fmtWhen(p.start).split(',')[0];
+    return `${day} ${hm(p.start)}–${hm(p.end)}`;
   }
 
   /* ----- AI engine: Cloudflare Workers AI (free, no key) or your own Gemini key ----- */
@@ -410,12 +510,14 @@ if (typeof document !== 'undefined') (() => {
   $('#qaMore').addEventListener('click', () => openEditor(newItem({ title: $('#qaTitle').value.trim() }), true));
 
   document.addEventListener('click', e => {
+    const w = e.target.closest('[data-open]');
+    if (w) { const it = db.items.find(x => x.id === w.dataset.open); if (it) openEditor(it); return; }
     const c = e.target.closest('.card'); if (!c) return;
     if (e.target.classList.contains('chk')) return toggleDone(c.dataset.id);
     if (e.target.closest('.body')) openEditor(db.items.find(x => x.id === c.dataset.id));
   });
   document.addEventListener('keydown', e => {
-    if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('.card .body')) { e.preventDefault(); e.target.click(); }
+    if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('.card .body, .plan.work')) { e.preventDefault(); e.target.click(); }
   });
 
   $('#edType').addEventListener('change', syncEditorType);
@@ -472,6 +574,15 @@ if (typeof document !== 'undefined') (() => {
   }
   $('#gKey').addEventListener('change', e => { db.settings.gKey = e.target.value.trim(); save(); scheduleTriage(200); });
   $('#autoAI').addEventListener('change', e => { db.settings.autoAI = e.target.checked; save(); scheduleTriage(200); });
+  for (const id of ['dayStart', 'dayEnd']) {
+    $('#' + id).innerHTML = Array.from({ length: id === 'dayStart' ? 24 : 24 }, (_, h) => `<option value="${h}">${String(h).padStart(2, '0')}:00</option>`).join('');
+    $('#' + id).addEventListener('change', e => {
+      db.settings[id] = +e.target.value;
+      if (db.settings.dayEnd <= db.settings.dayStart) { db.settings.dayEnd = Math.min(23, db.settings.dayStart + 1); $('#dayEnd').value = String(db.settings.dayEnd); }
+      save(true); render();
+    });
+  }
+  $('#calBtn').addEventListener('click', () => refreshCalendar(true));
   $('#aiProvider').addEventListener('change', e => { db.settings.aiProvider = e.target.value; save(true); scheduleTriage(200); });
   $('#detail').addEventListener('change', e => { db.settings.detail = +e.target.value; save(true); });
   $('#rescore').addEventListener('click', () => {
@@ -604,8 +715,8 @@ if (typeof document !== 'undefined') (() => {
     else toast('That sync link is incomplete. Enter the address and key in Settings.');
     history.replaceState(null, '', location.pathname + location.search);
   })();
-  $('#sUrl').addEventListener('change', e => { db.settings.syncUrl = e.target.value.trim().replace(/\/+$/, ''); save(true); scheduleSync(100); scheduleTriage(500); });
-  $('#sKey').addEventListener('change', e => { db.settings.syncToken = e.target.value.trim(); save(true); scheduleSync(100); scheduleTriage(500); });
+  $('#sUrl').addEventListener('change', e => { db.settings.syncUrl = e.target.value.trim().replace(/\/+$/, ''); save(true); scheduleSync(100); scheduleTriage(500); refreshCalendar(true); });
+  $('#sKey').addEventListener('change', e => { db.settings.syncToken = e.target.value.trim(); save(true); scheduleSync(100); scheduleTriage(500); refreshCalendar(true); });
   $('#syncBtn').addEventListener('click', syncNow);
   $('#syncLink').addEventListener('click', async () => {
     if (!syncOn()) return toast('Set up sync first');
@@ -613,11 +724,11 @@ if (typeof document !== 'undefined') (() => {
     try { await navigator.clipboard.writeText(link); toast('Link copied. Open it on your phone.'); }
     catch (e) { prompt('Copy this link:', link); }
   });
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') scheduleSync(300); });
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { scheduleSync(300); refreshCalendar(false); } });
   window.addEventListener('online', () => scheduleSync(300));
 
   setInterval(() => { if (!$('#editor').open && view !== 'settings') render(); }, 60e3);
-  setInterval(() => { if (document.visibilityState === 'visible') scheduleSync(0); }, 15e3); // pick up changes from other devices
-  render(); scheduleSync(200); scheduleTriage(1500);
+  setInterval(() => { if (document.visibilityState === 'visible') { scheduleSync(0); refreshCalendar(false); } }, 15e3); // pick up changes from other devices
+  render(); scheduleSync(200); scheduleTriage(1500); refreshCalendar(true);
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
 })();

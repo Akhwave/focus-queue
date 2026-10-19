@@ -68,3 +68,11 @@ label.check { display: flex; gap: 8px; align-items: center; color: var(--text); 
 label.check input { width: 20px; height: 20px; margin: 0; accent-color: var(--accent); }
 .card .next { font-size: .85rem; color: var(--muted); margin-top: 2px; overflow-wrap: anywhere; }
 button.mini { padding: 0 6px; font-size: .8rem; line-height: 1.5; margin-left: auto; }
+.plan { display: flex; gap: 12px; padding: 8px 12px; border-radius: 8px; margin-bottom: 6px; border: 1px solid var(--line); background: var(--panel); font-size: .95rem; }
+.plan .t { flex: none; width: 118px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.plan .n { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.plan.work { border-left: 5px solid var(--accent); cursor: pointer; }
+.plan.work.risk { border-left-color: var(--now); }
+.plan.busy { border-left: 5px solid var(--ev); }
+.plan.busy.freecal { opacity: .6; }
+.plan.allday { border-style: dashed; color: var(--muted); }

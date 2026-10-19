@@ -24,12 +24,13 @@ export default {
 
     if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
     const path = new URL(req.url).pathname;
-    if (path !== '/data' && path !== '/ai') return reply({ error: 'not found' }, 404);
+    if (path !== '/data' && path !== '/ai' && path !== '/calendar') return reply({ error: 'not found' }, 404);
 
     const got = (req.headers.get('Authorization') || '').replace(/^Bearer /, '');
     if (!env.TOKEN || !safeEqual(got, env.TOKEN)) return reply({ error: 'unauthorized' }, 401);
 
     if (path === '/ai') return ai(req, env, reply);
+    if (path === '/calendar') return calendar(req, env, cors, reply);
 
     const stub = env.STORE.get(env.STORE.idFromName('main'));
     const res = await stub.fetch('https://store/', { method: req.method, body: req.method === 'PUT' ? await req.text() : undefined });
@@ -64,6 +65,29 @@ async function ai(req, env, reply) {
     const msg = String((e && e.message) || e);
     if (/allocation|neurons|limit|quota/i.test(msg)) return reply({ error: 'Free daily AI limit reached. It resets at 00:00 UTC.' }, 429);
     return reply({ error: 'AI failed: ' + msg.slice(0, 120) }, 502);
+  }
+}
+
+// Calendar feeds: the private .ics links live only in the CAL_URLS secret (JSON: [{name, url}]).
+// This passes the file through untouched; the app reads it. (Parsing here would exceed the free CPU limit.)
+async function calendar(req, env, cors, reply) {
+  if (req.method !== 'GET') return reply({ error: 'method' }, 405);
+  let feeds;
+  try { feeds = JSON.parse(env.CAL_URLS || '[]'); } catch { return reply({ error: 'CAL_URLS is not valid JSON' }, 500); }
+  const i = new URL(req.url).searchParams.get('i');
+  if (i === null) return reply({ feeds: feeds.map((f, n) => ({ i: n, name: f.name || 'Calendar ' + (n + 1) })) });
+  const feed = feeds[Number(i)];
+  if (!feed || typeof feed.url !== 'string') return reply({ error: 'no such calendar' }, 404);
+  const url = feed.url.replace(/^webcal:/i, 'https:');
+  // plain http is only allowed for a local test feed; real calendar links are always https
+  if (!/^https:\/\//i.test(url) && !/^http:\/\/(127\.0\.0\.1|localhost)[:/]/i.test(url)) return reply({ error: 'calendar link must be https' }, 500);
+  try {
+    const up = await fetch(url, { signal: AbortSignal.timeout(12000), cf: { cacheTtl: 300, cacheEverything: true } });
+    if (!up.ok) return reply({ error: 'calendar provider answered ' + up.status }, 502);
+    if (Number(up.headers.get('content-length') || 0) > 12_000_000) return reply({ error: 'calendar file too large' }, 502);
+    return new Response(up.body, { status: 200, headers: { ...cors, 'Content-Type': 'text/calendar; charset=utf-8', 'Cache-Control': 'private, max-age=60' } });
+  } catch (e) {
+    return reply({ error: 'could not fetch calendar: ' + String((e && e.name) || e).slice(0, 60) }, 502);
   }
 }
 
