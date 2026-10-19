@@ -64,3 +64,7 @@ dialog::backdrop { background: rgba(0,0,0,.5); }
 #edSteps { margin-top: 10px; }
 #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--text); color: var(--bg);
   padding: 10px 16px; border-radius: 10px; z-index: 20; max-width: 90vw; }
+label.check { display: flex; gap: 8px; align-items: center; color: var(--text); font-size: .95rem; }
+label.check input { width: 20px; height: 20px; margin: 0; accent-color: var(--accent); }
+.card .next { font-size: .85rem; color: var(--muted); margin-top: 2px; overflow-wrap: anywhere; }
+button.mini { padding: 0 6px; font-size: .8rem; line-height: 1.5; margin-left: auto; }
