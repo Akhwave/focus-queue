@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Focus Queue</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg">
+<meta name="theme-color" content="#14161a">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>Focus Queue</h1>
+  <nav id="tabs">
+    <button data-view="queue" class="on">Queue</button>
+    <button data-view="agenda">Agenda</button>
+    <button data-view="done">Done</button>
+    <button data-view="settings">Settings</button>
+  </nav>
+</header>
+
+<main>
+  <form id="quickAdd" autocomplete="off">
+    <input id="qaTitle" placeholder="Add a task, event or habit…  (try: &quot;dentist fri 3pm&quot;)" required>
+    <button type="submit">Add</button>
+    <button type="button" id="qaMore" class="ghost" aria-label="More options">⋯</button>
+  </form>
+
+  <section id="view-queue" class="view"></section>
+  <section id="view-agenda" class="view" hidden></section>
+  <section id="view-done" class="view" hidden></section>
+
+  <section id="view-settings" class="view" hidden>
+    <h2>Ranking weights</h2>
+    <p class="muted">How much each factor counts in the queue order.</p>
+    <label>Importance <input type="range" id="wImp" min="0" max="10"><output></output></label>
+    <label>Deadline <input type="range" id="wUrg" min="0" max="10"><output></output></label>
+    <label>Ease <input type="range" id="wEase" min="0" max="10"><output></output></label>
+
+    <h2>AI helper (Gemini)</h2>
+    <p class="muted">Optional. Used to break tasks into steps and suggest importance / ease. The key stays in this browser only.
+      Get a free key at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>.</p>
+    <label>API key <input type="password" id="gKey" placeholder="paste key"></label>
+    <label>Model <input id="gModel" placeholder="gemini-2.5-flash"></label>
+
+    <h2>Your data</h2>
+    <div class="row">
+      <button id="exportBtn" class="ghost">Export JSON</button>
+      <button id="importBtn" class="ghost">Import JSON</button>
+      <input type="file" id="importFile" accept="application/json" hidden>
+    </div>
+  </section>
+</main>
+
+<dialog id="editor">
+  <form method="dialog" id="editForm">
+    <h2 id="edHead">Item</h2>
+    <label>Title <input id="edTitle" required></label>
+    <div class="row">
+      <label>Type
+        <select id="edType"><option value="task">Task</option><option value="event">Event</option><option value="habit">Habit</option></select>
+      </label>
+      <label id="edRepWrap">Repeats
+        <select id="edRep"><option value="none">No</option><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select>
+      </label>
+    </div>
+    <label><span id="edWhenLbl">Deadline</span> <input type="datetime-local" id="edWhen"></label>
+    <div class="row" id="edScores">
+      <label>Importance <select id="edImp"></select></label>
+      <label>Ease <select id="edEase"></select></label>
+      <label>Minutes <input type="number" id="edMin" min="0" step="5" placeholder="optional"></label>
+    </div>
+    <label>Notes <textarea id="edNotes" rows="3"></textarea></label>
+    <div id="edSteps"></div>
+    <div class="row">
+      <button type="button" id="edAi" class="ghost">✨ Suggest scores</button>
+      <button type="button" id="edBreak" class="ghost">✨ Break down</button>
+    </div>
+    <p id="edMsg" class="muted" role="status"></p>
+    <div class="row end">
+      <button type="button" id="edDelete" class="danger">Delete</button>
+      <button type="button" id="edCancel" class="ghost">Cancel</button>
+      <button type="submit" id="edSave">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="toast" role="status" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>
