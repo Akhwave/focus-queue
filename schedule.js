@@ -54,7 +54,19 @@
   // opts: {days, dayStart, dayEnd (minutes after midnight), buffer (minutes kept clear after each event), minGap}
   function freeSlots(events, now, opts) {
     const o = Object.assign({ days: 7, dayStart: 9 * 60, dayEnd: 21 * 60, buffer: 10, minGap: 10 }, opts);
-    const busy = events.filter(e => e.busy && !e.allDay).map(e => [e.start, e.end + o.buffer * MIN]).sort((a, b) => a[0] - b[0]);
+    // weekly "never plan work then" rules -> blocks for every day in the horizon
+    const blocks = [];
+    const day0 = new Date(now); day0.setHours(0, 0, 0, 0);
+    for (let d = -1; d <= o.days; d++) {
+      const day = new Date(day0); day.setDate(day.getDate() + d);
+      for (const b of o.blocked || []) {
+        if (!(b.days || []).includes(day.getDay())) continue;
+        const bs = new Date(day); bs.setHours(0, b.start, 0, 0);
+        const be = new Date(day); be.setHours(0, b.end, 0, 0);
+        if (be > bs) blocks.push([bs.getTime(), be.getTime()]);
+      }
+    }
+    const busy = events.filter(e => e.busy && !e.allDay).map(e => [e.start, e.end + o.buffer * MIN]).concat(blocks).sort((a, b) => a[0] - b[0]);
     const merged = [];
     for (const b of busy) {
       const last = merged[merged.length - 1];

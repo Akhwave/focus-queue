@@ -185,4 +185,20 @@ assert.strictEqual(pd.get('s1').sessions, 1, 'a 2-hour sheet is one session');
 // a prerequisite that has no sessions yet holds its dependents back
 const held = S.planTasks([{ id: 'x', minutes: 480, when: at(11, 25, 12) }, { id: 'y', minutes: 30, after: ['x'] }], week, nowW, {});
 assert.strictEqual(held.get('y').blocks.length, 0); assert.strictEqual(held.get('y').later, true);
+// ---- weekly unavailable blocks ----
+const sundayAll = { days: [0], start: 0, end: 1439 };
+const fs2 = S.freeSlots([], at(10, 22, 8), { days: 7, dayStart: 9 * 60, dayEnd: 21 * 60, buffer: 10, blocked: [sundayAll] });   // Thu 22 Oct ... Wed 28
+assert.strictEqual(fs2.filter(s => new Date(s[0]).getDay() === 0).length, 0, 'Sunday is completely unavailable');
+assert.ok(fs2.some(s => new Date(s[0]).getDay() === 6), 'Saturday still has slots');
+// a partial block (08:00-20:00) leaves only the evening
+const part = S.freeSlots([], at(10, 22, 8), { days: 7, dayStart: 9 * 60, dayEnd: 21 * 60, buffer: 10, blocked: [{ days: [0], start: 8 * 60, end: 20 * 60 }] }).filter(s => new Date(s[0]).getDay() === 0);
+assert.ok(part.length > 0 && part.every(s => new Date(s[0]).getHours() >= 20), 'partial block leaves Sunday evening');
+// no rules: Sunday is a normal day
+assert.ok(S.freeSlots([], at(10, 22, 8), { days: 7, dayStart: 9 * 60, dayEnd: 21 * 60, buffer: 10, blocked: [] }).some(s => new Date(s[0]).getDay() === 0 && new Date(s[0]).getHours() === 9));
+// weekdays rule
+const wk = S.freeSlots([], at(10, 19, 8), { days: 7, dayStart: 9 * 60, dayEnd: 21 * 60, blocked: [{ days: [1, 2, 3, 4, 5], start: 9 * 60, end: 17 * 60 }] });
+assert.ok(wk.every(s => ![1, 2, 3, 4, 5].includes(new Date(s[0]).getDay()) || new Date(s[0]).getHours() >= 17), 'weekday daytime blocked');
+// planner respects it: nothing planned on a blocked Sunday
+const sp = S.planTasks([{ id: 'q', minutes: 90, when: at(10, 26, 13) }, { id: 'r', minutes: 90, when: at(10, 26, 13) }], fs2, at(10, 22, 8), {});
+for (const b of [...sp.values()].flatMap(x => x.blocks)) assert.ok(new Date(b.start).getDay() !== 0, 'planned on a blocked Sunday');
 console.log('schedule tests ok');

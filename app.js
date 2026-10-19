@@ -2,8 +2,8 @@
 
 /* ---------- pure logic (also used by tests) ---------- */
 
-const VERSION = '2026-10-19.11';
-const DEFAULTS = { dayStart: 9, dayEnd: 21, aiProvider: 'auto', wImp: 5, wUrg: 5, wEase: 2, wFit: 2, autoAI: true, detail: 2, gKey: '', gModel: 'gemini-2.5-flash', syncUrl: '', syncToken: '' };
+const VERSION = '2026-10-19.12';
+const DEFAULTS = { blocked: [{ days: [0], start: 0, end: 1439 }], dayStart: 9, dayEnd: 21, aiProvider: 'auto', wImp: 5, wUrg: 5, wEase: 2, wFit: 2, autoAI: true, detail: 2, gKey: '', gModel: 'gemini-2.5-flash', syncUrl: '', syncToken: '' };
 const HOUR = 3600e3, DAY = 24 * HOUR;
 
 function urgency(when, now) {
@@ -316,7 +316,7 @@ if (typeof document !== 'undefined') (() => {
       const el = $('#' + id); el.value = s[k]; el.nextElementSibling.textContent = s[k];
     }
     $('#gKey').value = s.gKey; $('#gModel').value = s.gModel;
-    $('#dayStart').value = String(s.dayStart); $('#dayEnd').value = String(s.dayEnd); calStatus(calSummary());
+    $('#dayStart').value = String(s.dayStart); $('#dayEnd').value = String(s.dayEnd); calStatus(calSummary()); renderBlocked();
     $('#aiProvider').value = s.aiProvider === 'gemini' ? 'gemini' : 'auto';
     $('#autoAI').checked = s.autoAI !== false; $('#detail').value = String(s.detail || 2);
     $('#sUrl').value = s.syncUrl; $('#sKey').value = s.syncToken;
@@ -437,7 +437,7 @@ if (typeof document !== 'undefined') (() => {
   // suggested slots for tasks (already in priority order); empty until a calendar has loaded
   function makePlan(items, now) {
     if (!syncOn() || !cal.fetchedAt) return new Map();
-    const slots = FQSchedule.freeSlots(busyEvents(now), now, { days: 14, dayStart: db.settings.dayStart * 60, dayEnd: db.settings.dayEnd * 60 });
+    const slots = FQSchedule.freeSlots(busyEvents(now), now, { days: 14, dayStart: db.settings.dayStart * 60, dayEnd: db.settings.dayEnd * 60, blocked: db.settings.blocked });
     return FQSchedule.planTasks(items, slots, now);
   }
   const hm = ms => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
@@ -581,11 +581,42 @@ if (typeof document !== 'undefined') (() => {
   for (const id of ['dayStart', 'dayEnd']) {
     $('#' + id).innerHTML = Array.from({ length: id === 'dayStart' ? 24 : 24 }, (_, h) => `<option value="${h}">${String(h).padStart(2, '0')}:00</option>`).join('');
     $('#' + id).addEventListener('change', e => {
-      db.settings[id] = +e.target.value;
+      db.settings[id] = +e.target.value; db.settingsUpdated = Date.now();
       if (db.settings.dayEnd <= db.settings.dayStart) { db.settings.dayEnd = Math.min(23, db.settings.dayStart + 1); $('#dayEnd').value = String(db.settings.dayEnd); }
-      save(true); render();
+      save(); render();
     });
   }
+
+  /* ----- weekly unavailable times ("never plan work then") ----- */
+  const DAYSETS = { all: [0, 1, 2, 3, 4, 5, 6], weekdays: [1, 2, 3, 4, 5], weekends: [0, 6], 0: [0], 1: [1], 2: [2], 3: [3], 4: [4], 5: [5], 6: [6] };
+  const DAYLABELS = { all: 'Every day', weekdays: 'Weekdays', weekends: 'Weekends', 0: 'Sunday', 1: 'Monday', 2: 'Tuesday', 3: 'Wednesday', 4: 'Thursday', 5: 'Friday', 6: 'Saturday' };
+  const setKey = days => Object.keys(DAYSETS).find(k => DAYSETS[k].length === days.length && DAYSETS[k].every((d, i) => d === days[i])) || 'custom';
+  const toTime = m => String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
+  const fromTime = t => { const [h, m] = String(t).split(':').map(Number); return (h || 0) * 60 + (m || 0); };
+  function renderBlocked() {
+    const list = db.settings.blocked || [];
+    $('#blockedList').innerHTML = list.map((b, i) => `<div class="row blockrow" data-i="${i}">
+      <label>Days <select data-f="days">${Object.keys(DAYLABELS).map(k => `<option value="${k}" ${setKey(b.days) === k ? 'selected' : ''}>${DAYLABELS[k]}</option>`).join('')}${setKey(b.days) === 'custom' ? '<option value="custom" selected>Custom</option>' : ''}</select></label>
+      <label>From <input type="time" data-f="start" value="${toTime(b.start)}"></label>
+      <label>To <input type="time" data-f="end" value="${toTime(b.end)}"></label>
+      <button type="button" class="ghost" data-del="${i}" aria-label="Remove">✕</button></div>`).join('') || '<p class="muted">Nothing blocked. Work can be planned any day inside your day start and end.</p>';
+  }
+  function blockedChanged() { db.settingsUpdated = Date.now(); save(); render(); }
+  $('#blockedList').addEventListener('change', e => {
+    const row = e.target.closest('.blockrow'); if (!row) return;
+    const b = db.settings.blocked[+row.dataset.i], f = e.target.dataset.f;
+    if (f === 'days' && DAYSETS[e.target.value]) b.days = DAYSETS[e.target.value].slice();
+    if (f === 'start') b.start = fromTime(e.target.value);
+    if (f === 'end') b.end = fromTime(e.target.value);
+    blockedChanged();
+  });
+  $('#blockedList').addEventListener('click', e => {
+    const del = e.target.closest('[data-del]'); if (!del) return;
+    db.settings.blocked.splice(+del.dataset.del, 1); blockedChanged(); renderBlocked();
+  });
+  $('#blockedAdd').addEventListener('click', () => {
+    db.settings.blocked = (db.settings.blocked || []).concat([{ days: [6], start: 9 * 60, end: 17 * 60 }]); blockedChanged(); renderBlocked();
+  });
   $('#calBtn').addEventListener('click', () => refreshCalendar(true));
   $('#aiProvider').addEventListener('change', e => { db.settings.aiProvider = e.target.value; save(true); scheduleTriage(200); });
   $('#detail').addEventListener('change', e => { db.settings.detail = +e.target.value; save(true); });
@@ -664,7 +695,7 @@ if (typeof document !== 'undefined') (() => {
   const syncOn = () => !!(db.settings.syncUrl && db.settings.syncToken);
   function syncStatus(msg) { const el = $('#syncStatus'); if (el) el.textContent = msg; }
   const payload = () => ({ items: db.items, deleted: db.deleted, settingsUpdated: db.settingsUpdated,
-    weights: { wImp: db.settings.wImp, wUrg: db.settings.wUrg, wEase: db.settings.wEase, wFit: db.settings.wFit } });
+    weights: { wImp: db.settings.wImp, wUrg: db.settings.wUrg, wEase: db.settings.wEase, wFit: db.settings.wFit, dayStart: db.settings.dayStart, dayEnd: db.settings.dayEnd, blocked: db.settings.blocked } });
   function scheduleSync(delay = 1500) {
     if (!syncOn()) return;
     clearTimeout(syncTimer); syncTimer = setTimeout(syncNow, delay);
