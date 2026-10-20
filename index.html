@@ -28,6 +28,8 @@
     <button type="button" id="qaMore" class="ghost" aria-label="More options">⋯</button>
   </form>
 
+  <div id="filterBar" class="filters" role="toolbar" aria-label="Filter by tag"></div>
+
   <section id="view-queue" class="view"></section>
   <section id="view-plan" class="view" hidden></section>
   <section id="view-agenda" class="view" hidden></section>
@@ -105,6 +107,8 @@
       <label>Ease <select id="edEase"></select></label>
       <label>Minutes <input type="number" id="edMin" min="0" step="5" placeholder="optional"></label>
     </div>
+    <label>Tag <input id="edTag" list="tagList" placeholder="University, Trading… or type a new one" maxlength="24" autocomplete="off"></label>
+    <datalist id="tagList"></datalist>
     <label>Notes <textarea id="edNotes" rows="3"></textarea></label>
     <div id="edSteps"></div>
     <div class="row">

@@ -80,3 +80,10 @@ h3 { font-size: .95rem; margin: 18px 0 4px; }
 .blockrow { margin-bottom: 6px; }
 .blockrow > label { flex: 1 1 110px; }
 .blockrow button { flex: none; }
+.filters { display: flex; gap: 6px; overflow-x: auto; margin: 0 0 12px; padding-bottom: 2px; }
+.filters button { flex: none; border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 999px; padding: 4px 12px; cursor: pointer; font-size: .9rem; }
+.filters button span { color: var(--muted); font-size: .8rem; margin-left: 2px; }
+.filters button.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.filters button.on span { color: inherit; opacity: .8; }
+.filters button.ghost { background: none; border-style: dashed; color: var(--muted); }
+.chip.tag { background: hsl(var(--h) 55% 45% / .18); border-color: hsl(var(--h) 55% 50% / .5); }

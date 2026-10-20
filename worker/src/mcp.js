@@ -23,6 +23,7 @@ const TOOLS = [
         after: { type: 'array', items: { type: 'string' }, description: 'Ids of tasks that must be done first' },
         id: { type: 'string', description: 'Optional short id, lowercase with dashes' },
         type: { type: 'string', enum: ['task', 'event', 'habit'] },
+        tag: { type: 'string', description: 'University, Other, Trading, Business, or any new tag name' },
       },
     },
   },
@@ -33,7 +34,7 @@ const TOOLS = [
       type: 'object', required: ['id'],
       properties: {
         id: { type: 'string' }, title: { type: 'string' }, due: { type: 'string' }, importance: { type: 'integer' },
-        ease: { type: 'integer' }, minutes: { type: 'integer' }, notes: { type: 'string' }, after: { type: 'array', items: { type: 'string' } },
+        ease: { type: 'integer' }, minutes: { type: 'integer' }, notes: { type: 'string' }, tag: { type: 'string' }, after: { type: 'array', items: { type: 'string' } },
       },
     },
   },
@@ -91,7 +92,7 @@ async function mutate(env, fn) {
 }
 
 const view = (i, now) => ({
-  id: i.id, title: i.title, type: i.type, done: !!i.done,
+  id: i.id, title: i.title, type: i.type, tag: i.tag || '', done: !!i.done,
   due: i.when ? ukTime(i.when) : null,
   overdue: !i.done && !!i.when && i.when < now,
   importance: i.importance, ease: i.ease, minutes: i.minutes || null,
@@ -116,7 +117,7 @@ async function callTool(env, name, a) {
       title: a.title.slice(0, 200), type: ['task', 'event', 'habit'].includes(a.type) ? a.type : 'task',
       when: a.due ? londonToMs(a.due) : null,
       importance: clamp(a.importance, 1, 5, 3), ease: clamp(a.ease, 1, 5, 3), minutes: a.minutes ? clamp(a.minutes, 5, 2000, null) : null,
-      notes: String(a.notes || '').slice(0, 2000), steps: [], after: Array.isArray(a.after) ? a.after.map(String) : [], repeat: 'none',
+      notes: String(a.notes || '').slice(0, 2000), tag: String(a.tag || '').replace(/^#/, '').trim().slice(0, 24), steps: [], after: Array.isArray(a.after) ? a.after.map(String) : [], repeat: 'none',
       done: false, doneAt: null, created: now, updated: now, bestTime: 'anytime', why: '',
     };
     // values given are final unless the caller leaves scoring out, in which case the app's AI scores it
@@ -146,6 +147,7 @@ async function callTool(env, name, a) {
         if (a.ease != null) it.ease = clamp(a.ease, 1, 5, it.ease);
         if (a.minutes != null) it.minutes = clamp(a.minutes, 5, 2000, it.minutes);
         if (typeof a.notes === 'string') it.notes = a.notes.slice(0, 2000);
+        if (typeof a.tag === 'string') it.tag = a.tag.replace(/^#/, '').trim().slice(0, 24);
         if (Array.isArray(a.after)) it.after = a.after.map(String);
         it.ai = now;
       }

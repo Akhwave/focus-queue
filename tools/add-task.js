@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Add a task to the Focus Queue via the sync server.
 //   node tools/add-task.js --title "ML problem sheet 3" --when "2026-10-30 18:00" --importance 3 --ease 2 --minutes 120 \
-//        --after canvas-ml-sheet2 --notes "link or detail" --id ml-sheet3 [--ai] [--dry-run]
+//        --after canvas-ml-sheet2 --notes "link or detail" --tag University --id ml-sheet3 [--ai] [--dry-run]
 // --when is UK local time ("YYYY-MM-DD HH:MM"), or a full ISO string with a zone. Omit it for no deadline.
 // --ai   : leave scoring to the AI (importance/ease/minutes/steps) instead of the values given.
 // The sync key is read from $FOCUSQ_KEY or from ~/.focusq-key. Server: $FOCUSQ_URL or the default below.
@@ -38,7 +38,7 @@ function londonToMs(s) {
     id: arg('id') ? slug : `task-${slug}-${now.toString(36)}`, title, type: arg('type', 'task'),
     when: arg('when') ? londonToMs(String(arg('when'))) : null,
     importance: +arg('importance', 3), ease: +arg('ease', 3), minutes: arg('minutes') ? +arg('minutes') : null,
-    notes: String(arg('notes', '')), steps: [], after: arg('after') ? String(arg('after')).split(',') : [], repeat: arg('repeat', 'none'),
+    notes: String(arg('notes', '')), tag: String(arg('tag', '') === true ? '' : arg('tag', '')), steps: [], after: arg('after') ? String(arg('after')).split(',') : [], repeat: arg('repeat', 'none'),
     done: false, doneAt: null, created: now, updated: now, bestTime: arg('besttime', 'anytime'), why: String(arg('why', '')),
   };
   if (!arg('ai')) item.ai = now;   // values given are final; --ai leaves it for the AI to score

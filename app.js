@@ -2,7 +2,7 @@
 
 /* ---------- pure logic (also used by tests) ---------- */
 
-const VERSION = '2026-10-20.1';
+const VERSION = '2026-10-20.2';
 const DEFAULTS = { blocked: [{ days: [0], start: 0, end: 1439 }], dayStart: 9, dayEnd: 21, aiProvider: 'auto', wImp: 5, wUrg: 5, wEase: 2, wFit: 2, autoAI: true, detail: 2, gKey: '', gModel: 'gemini-2.5-flash', syncUrl: '', syncToken: '' };
 const HOUR = 3600e3, DAY = 24 * HOUR;
 
@@ -161,7 +161,7 @@ if (typeof document !== 'undefined') (() => {
   const $ = s => document.querySelector(s);
   // fill any missing fields (older data, or items from another device)
   const norm = i => ({ title: '', type: 'task', when: null, importance: 3, ease: 3, minutes: null, notes: '',
-    steps: [], after: [], repeat: 'none', done: false, doneAt: null, created: 0, updated: 0, ...i });
+    steps: [], after: [], tag: '', repeat: 'none', done: false, doneAt: null, created: 0, updated: 0, ...i });
   const KEY = 'focusqueue.v1';
   let db = load();
   let view = 'queue';
@@ -188,7 +188,7 @@ if (typeof document !== 'undefined') (() => {
 
   function newItem(p) {
     return { id: uid(), title: '', type: 'task', when: null, importance: 3, ease: 3, minutes: null, notes: '',
-      steps: [], repeat: 'none', done: false, doneAt: null, created: Date.now(), updated: Date.now(), ...p };
+      steps: [], tag: '', repeat: 'none', done: false, doneAt: null, created: Date.now(), updated: Date.now(), ...p };
   }
 
   function fmtWhen(ms) {
@@ -206,6 +206,36 @@ if (typeof document !== 'undefined') (() => {
     return h < 0 ? s + ' overdue' : 'in ' + s;
   }
 
+
+  /* ----- tags / filter ----- */
+  const DEFAULT_TAGS = ['University', 'Other', 'Trading', 'Business'];
+  const NOTAG = '\u0000none';
+  const FILTER_KEY = 'focusqueue.filter';
+  let filterTag = (() => { try { return localStorage.getItem(FILTER_KEY) || ''; } catch (e) { return ''; } })();
+  const allTags = () => {
+    const out = DEFAULT_TAGS.slice();
+    for (const i of db.items) if (i.tag && !out.some(t => t.toLowerCase() === i.tag.toLowerCase())) out.push(i.tag);
+    return out;
+  };
+  // reuse the stored spelling when the same tag is typed in a different case
+  const canonTag = t => { t = String(t || '').trim().replace(/^#/, '').slice(0, 24); return allTags().find(x => x.toLowerCase() === t.toLowerCase()) || t; };
+  const matchesFilter = i => !filterTag || (filterTag === NOTAG ? !i.tag : (i.tag || '').toLowerCase() === filterTag.toLowerCase());
+  const tagHue = t => { let h = 0; for (const c of t.toLowerCase()) h = (h * 31 + c.charCodeAt(0)) % 360; return h; };
+  const tagChip = t => t ? `<span class="chip tag" style="--h:${tagHue(t)}">${esc(t)}</span>` : '';
+  function renderFilterBar() {
+    const bar = $('#filterBar');
+    const open = db.items.filter(i => !i.done);
+    const count = t => open.filter(i => (i.tag || '').toLowerCase() === t.toLowerCase()).length;
+    const btn = (val, label, n) => `<button type="button" data-f="${esc(val)}" class="${filterTag === val ? 'on' : ''}">${esc(label)}${n ? ` <span>${n}</span>` : ''}</button>`;
+    const untagged = open.filter(i => !i.tag).length;
+    bar.innerHTML = btn('', 'All', open.length) + allTags().map(t => btn(t, t, count(t))).join('') + (untagged ? btn(NOTAG, 'Untagged', untagged) : '') +
+      '<button type="button" data-newtag class="ghost">+ New tag</button>';
+    bar.hidden = view === 'settings';
+  }
+  function setFilter(v) {
+    filterTag = v; try { localStorage.setItem(FILTER_KEY, v); } catch (e) { /* fine */ } render();
+  }
+
   /* ----- rendering ----- */
   function nextStep(item) {
     const n = (item.steps || []).find(x => !x.done);
@@ -219,6 +249,7 @@ if (typeof document !== 'undefined') (() => {
     if (item.minutes) chips.push(`<span class="chip">${item.minutes} min</span>`);
     if (item.repeat !== 'none') chips.push(`<span class="chip">↻ ${item.repeat}</span>`);
     if (item.type === 'habit') chips.push('<span class="chip">habit</span>');
+    if (item.tag) chips.push(tagChip(item.tag));
     if (p && !item.done) {
       if (p.start != null) chips.push(`<span class="chip ${p.fits ? '' : 'over'}">🗓 ${esc(slotLabel(p))}${p.sessions > 1 ? ` · 1 of ${p.sessions}` : ''}${p.fits ? '' : ' · after deadline'}</span>`);
       else if (p.later) chips.push(`<span class="chip">start ~${esc(new Date(p.opensAt).toLocaleDateString([], { month: 'short', day: 'numeric' }))}</span>`);
@@ -236,14 +267,15 @@ if (typeof document !== 'undefined') (() => {
   function renderQueue() {
     const now = Date.now(), w = db.settings;
     const open = db.items.filter(i => !i.done);
-    const tasks = open.filter(i => i.type !== 'event')
+    const everyTask = open.filter(i => i.type !== 'event')
       .map(i => ({ i, r: rank(i, now, w) })).sort((a, b) => b.r.score - a.r.score);
-    const plan = makePlan(tasks.map(x => x.i), now);
+    const plan = makePlan(everyTask.map(x => x.i), now);   // planned across everything so tags never clash with each other
+    const tasks = everyTask.filter(x => matchesFilter(x.i));
     for (const x of tasks) { const p = plan.get(x.i.id); if (p && p.fits === false && x.i.when && !x.r.overdue) x.r = { ...x.r, tier: 'now' }; }
     // inside each group, whatever you're due to work on soonest comes first; unplanned tasks follow by score
     const startOf = x => { const p = plan.get(x.i.id); return p && p.blocks && p.blocks.length ? p.blocks[0].start : Infinity; };
     tasks.sort((a, b) => startOf(a) - startOf(b) || b.r.score - a.r.score);
-    const events = open.filter(i => i.type === 'event' && i.when && i.when > now - HOUR && i.when < now + 2 * DAY)
+    const events = open.filter(i => matchesFilter(i) && i.type === 'event' && i.when && i.when > now - HOUR && i.when < now + 2 * DAY)
       .sort((a, b) => a.when - b.when);
     const labels = { now: 'Do now', next: 'Up next', later: 'Later' };
     let html = '';
@@ -252,7 +284,7 @@ if (typeof document !== 'undefined') (() => {
       const g = tasks.filter(x => x.r.tier === tier);
       if (g.length) html += `<div class="group">${labels[tier]}</div>` + g.map(x => card(x.i, now, x.r, plan.get(x.i.id))).join('');
     }
-    $('#view-queue').innerHTML = html || '<div class="empty">Nothing to do. Add something above.</div>';
+    $('#view-queue').innerHTML = html || `<div class="empty">${filterTag ? 'Nothing in this tag.' : 'Nothing to do. Add something above.'}</div>`;
   }
 
 
@@ -265,7 +297,7 @@ if (typeof document !== 'undefined') (() => {
     for (const e of busyEvents(now)) if (e.end > now) rows.push({ start: e.start, end: e.end, kind: e.allDay ? 'allday' : 'busy', title: e.title || '(busy)', cal: e.cal, free: e.busy === false });
     for (const [id, p] of plan) {
       const it = db.items.find(x => x.id === id);
-      if (!it) continue;
+      if (!it || !matchesFilter(it)) continue;
       for (const b of p.blocks) rows.push({ start: b.start, end: b.end, kind: 'work', title: it.title + (p.sessions > 1 ? ` (${b.k}/${p.sessions})` : ''), id, fits: p.fits });
     }
     rows.sort((a, b) => a.start - b.start || (a.kind === 'allday' ? -1 : 1));
@@ -290,7 +322,7 @@ if (typeof document !== 'undefined') (() => {
 
   function renderAgenda() {
     const now = Date.now();
-    const list = db.items.filter(i => !i.done && i.when).sort((a, b) => a.when - b.when);
+    const list = db.items.filter(i => !i.done && i.when && matchesFilter(i)).sort((a, b) => a.when - b.when);
     const byDay = new Map();
     for (const i of list) {
       const k = new Date(i.when).toDateString();
@@ -302,14 +334,14 @@ if (typeof document !== 'undefined') (() => {
       html += `<div class="group">${esc(fmtWhen(new Date(k).getTime()).replace(/,.*$/, '') || k)}</div>`;
       html += arr.map(i => card(i, now, i.type === 'event' ? null : rank(i, now, db.settings))).join('');
     }
-    const undated = db.items.filter(i => !i.done && !i.when).length;
+    const undated = db.items.filter(i => !i.done && !i.when && matchesFilter(i)).length;
     if (undated) html += `<p class="muted">${undated} item${undated > 1 ? 's' : ''} without a date are only in the Queue.</p>`;
     $('#view-agenda').innerHTML = html || '<div class="empty">No dated items.</div>';
   }
 
   function renderDone() {
     const now = Date.now();
-    const list = db.items.filter(i => i.done).sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0)).slice(0, 100);
+    const list = db.items.filter(i => i.done && matchesFilter(i)).sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0)).slice(0, 100);
     $('#view-done').innerHTML = list.map(i => card(i, now, null)).join('') || '<div class="empty">Nothing completed yet.</div>';
   }
 
@@ -330,6 +362,7 @@ if (typeof document !== 'undefined') (() => {
     for (const v of ['queue', 'plan', 'agenda', 'done', 'settings']) $('#view-' + v).hidden = v !== view;
     document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.view === view));
     $('#quickAdd').hidden = view === 'settings';
+    renderFilterBar(); $('#tagList').innerHTML = allTags().map(t => `<option value="${esc(t)}">`).join('');
     ({ queue: renderQueue, plan: renderPlan, agenda: renderAgenda, done: renderDone, settings: renderSettings })[view]();
   }
 
@@ -361,7 +394,7 @@ if (typeof document !== 'undefined') (() => {
     $('#edTitle').value = item.title; $('#edType').value = item.type; $('#edRep').value = item.repeat;
     $('#edWhen').value = toLocalInput(item.when);
     $('#edImp').value = item.importance; $('#edEase').value = item.ease;
-    $('#edMin').value = item.minutes || ''; $('#edNotes').value = item.notes;
+    $('#edMin').value = item.minutes || ''; $('#edNotes').value = item.notes; $('#edTag').value = item.tag || '';
     $('#edDelete').hidden = !!isNew; $('#edMsg').textContent = '';
     syncEditorType(); renderSteps();
     $('#editor').showModal();
@@ -385,6 +418,7 @@ if (typeof document !== 'undefined') (() => {
     editing.importance = +$('#edImp').value; editing.ease = +$('#edEase').value;
     editing.minutes = $('#edMin').value ? +$('#edMin').value : null;
     editing.notes = $('#edNotes').value;
+    editing.tag = canonTag($('#edTag').value);
   }
 
 
@@ -507,14 +541,21 @@ if (typeof document !== 'undefined') (() => {
 
   $('#quickAdd').addEventListener('submit', e => {
     e.preventDefault();
-    const raw = $('#qaTitle').value.trim(); if (!raw) return;
+    let raw = $('#qaTitle').value.trim(); if (!raw) return;
+    let tag = filterTag && filterTag !== NOTAG ? filterTag : '';
+    raw = raw.replace(/(^|\s)#([\w-]{1,24})(?=\s|$)/, (m, sp, t) => { tag = canonTag(t); return sp; }).trim() || raw;
     const p = parseQuick(raw, Date.now());
     const type = p.when && EVENT_WORDS.test(p.title) ? 'event' : 'task';
-    db.items.push(newItem({ title: p.title, when: p.when, type }));
+    db.items.push(newItem({ title: p.title, when: p.when, type, tag }));
     save(); $('#qaTitle').value = ''; render();
     toast(p.when ? `Added for ${fmtWhen(p.when)}` : 'Added');
   });
-  $('#qaMore').addEventListener('click', () => openEditor(newItem({ title: $('#qaTitle').value.trim() }), true));
+  $('#qaMore').addEventListener('click', () => openEditor(newItem({ title: $('#qaTitle').value.trim(), tag: filterTag && filterTag !== NOTAG ? filterTag : '' }), true));
+  $('#filterBar').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.newtag !== undefined) { openEditor(newItem({ title: $('#qaTitle').value.trim() }), true); setTimeout(() => $('#edTag').focus(), 50); toast('Type a new tag name in the Tag box'); return; }
+    setFilter(b.dataset.f);
+  });
 
   document.addEventListener('click', e => {
     const w = e.target.closest('[data-open]');
