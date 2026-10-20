@@ -2,7 +2,7 @@
 
 /* ---------- pure logic (also used by tests) ---------- */
 
-const VERSION = '2026-10-19.12';
+const VERSION = '2026-10-20.1';
 const DEFAULTS = { blocked: [{ days: [0], start: 0, end: 1439 }], dayStart: 9, dayEnd: 21, aiProvider: 'auto', wImp: 5, wUrg: 5, wEase: 2, wFit: 2, autoAI: true, detail: 2, gKey: '', gModel: 'gemini-2.5-flash', syncUrl: '', syncToken: '' };
 const HOUR = 3600e3, DAY = 24 * HOUR;
 
@@ -240,6 +240,9 @@ if (typeof document !== 'undefined') (() => {
       .map(i => ({ i, r: rank(i, now, w) })).sort((a, b) => b.r.score - a.r.score);
     const plan = makePlan(tasks.map(x => x.i), now);
     for (const x of tasks) { const p = plan.get(x.i.id); if (p && p.fits === false && x.i.when && !x.r.overdue) x.r = { ...x.r, tier: 'now' }; }
+    // inside each group, whatever you're due to work on soonest comes first; unplanned tasks follow by score
+    const startOf = x => { const p = plan.get(x.i.id); return p && p.blocks && p.blocks.length ? p.blocks[0].start : Infinity; };
+    tasks.sort((a, b) => startOf(a) - startOf(b) || b.r.score - a.r.score);
     const events = open.filter(i => i.type === 'event' && i.when && i.when > now - HOUR && i.when < now + 2 * DAY)
       .sort((a, b) => a.when - b.when);
     const labels = { now: 'Do now', next: 'Up next', later: 'Later' };
