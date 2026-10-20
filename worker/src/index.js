@@ -1,5 +1,6 @@
 // One Durable Object holds your data as {rev, data}. Strongly consistent, so two devices
 // can't overwrite each other: a write must name the revision it was based on.
+import { handleMcp } from './mcp.js';
 const MAX_BYTES = 1_000_000;
 
 function safeEqual(a, b) {
@@ -24,6 +25,7 @@ export default {
 
     if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
     const path = new URL(req.url).pathname;
+    if (path.startsWith('/mcp/')) return handleMcp(req, env);   // claude.ai connector; its own secret key in the URL
     if (path !== '/data' && path !== '/ai' && path !== '/calendar') return reply({ error: 'not found' }, 404);
 
     const got = (req.headers.get('Authorization') || '').replace(/^Bearer /, '');
